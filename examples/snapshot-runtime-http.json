@@ -1,0 +1,41 @@
+{
+  "name": "Runtime HTTP Agent",
+  "version": "1.0.0",
+  "adapter_type": "runtime-http",
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "run_path": "/agent/run",
+    "health_path": "/health",
+    "agent_id": "your-agent-id",
+    "model": {
+      "provider_id": "your-provider",
+      "model_id": "your-model"
+    },
+    "run_config": {
+      "permission": "READONLY",
+      "temperature": 0
+    },
+    "budget": {
+      "max_steps": 20
+    },
+    "timeout_seconds": 180,
+    "auth_token_env": "RUNTIME_AGENT_TOKEN",
+    "capabilities": {
+      "features": [
+        "final_output",
+        "structured_output",
+        "events",
+        "usage"
+      ],
+      "tools": [],
+      "events": [
+        "tool_call",
+        "tool_result",
+        "assistant_final"
+      ],
+      "domains": [
+        "general"
+      ]
+    }
+  }
+}

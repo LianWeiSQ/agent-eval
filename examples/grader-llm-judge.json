@@ -1,0 +1,11 @@
+{
+  "name": "Evidence Grounded Judge",
+  "version": "1.0.0",
+  "grader_type": "llm_judge",
+  "config": {
+    "endpoint": "https://your-openai-compatible-endpoint/v1/chat/completions",
+    "model": "your-judge-model",
+    "api_key_env": "EVAL_JUDGE_API_KEY",
+    "rubric": "任务完成度、事实准确性、完整性、证据绑定、指令遵循各占 20 分。每个扣分必须引用可观察事件或 Artifact。"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "manifest": {
+    "id": "hello-agent-example",
+    "name": "Hello Agent Example",
+    "version": "1.0.0",
+    "benchmark_type": "general",
+    "pass_threshold": 80,
+    "license": "CC0-1.0"
+  },
+  "tasks": [
+    {
+      "id": "HELLO-001",
+      "version": "1.0.0",
+      "suite": "quickstart",
+      "instruction": "请回答 hello-eval-v1。",
+      "tags": [
+        "quickstart",
+        "deterministic"
+      ],
+      "case_type": "typical",
+      "timeout_seconds": 30,
+      "environment": {
+        "type": "fixture",
+        "snapshot": "local"
+      },
+      "agent_requirements": {},
+      "graders": [
+        {
+          "id": "hello-rule-v1",
+          "type": "rule",
+          "weight": 1,
+          "config": {
+            "contains": [
+              "hello-eval-v1"
+            ],
+            "max_tool_calls": 0
+          }
+        }
+      ],
+      "hard_failures": [
+        "forbidden_tool",
+        "secret_exposure"
+      ]
+    }
+  ]
+}

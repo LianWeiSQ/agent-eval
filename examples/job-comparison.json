@@ -1,0 +1,26 @@
+{
+  "name": "Agent Eval 与 DSH MMLU 对照",
+  "benchmark_id": "<replace-with-benchmark-id>",
+  "agent_snapshot_ids": [
+    "<replace-with-baseline-snapshot-id>",
+    "<replace-with-candidate-snapshot-id>"
+  ],
+  "compatibility_mode": "strict",
+  "task_filter": {},
+  "execution": {
+    "repetitions": 3,
+    "max_concurrency": 4,
+    "timeout_seconds": 180,
+    "infra_retry_limit": 1
+  },
+  "baseline_agent_snapshot_id": "<replace-with-baseline-snapshot-id>",
+  "report_policy": {
+    "human_sample_rate": 0.1,
+    "invalid_rate_limit": 0.2
+  },
+  "gate": {
+    "min_pass_rate": 0.8,
+    "max_hard_failures": 0
+  },
+  "idempotency_key": "mmlu-agent-comparison-example-v1"
+}

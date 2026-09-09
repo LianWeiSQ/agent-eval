@@ -1,0 +1,9 @@
+{
+  "id": "contains-keyword-executable-v1",
+  "type": "executable",
+  "version": "1.0.0",
+  "entrypoint": "contains_keyword.py",
+  "timeout_seconds": 10,
+  "weight": 1,
+  "required": true
+}

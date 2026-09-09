@@ -1,0 +1,22 @@
+{
+  "name": "DeepSeek Harness Headless",
+  "version": "pinned-commit-or-release",
+  "adapter_type": "dsh-headless",
+  "config": {
+    "command": [
+      "dsh",
+      "--profile",
+      "headless",
+      "{instruction}"
+    ],
+    "health_command": [
+      "dsh",
+      "--version"
+    ],
+    "working_directory": ".",
+    "events_path": "session-events.jsonl",
+    "environment_from": {
+      "MODEL_API_KEY": "DSH_MODEL_API_KEY"
+    }
+  }
+}

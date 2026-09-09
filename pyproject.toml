@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-evaluation"
+version = "1.0.0"
+description = "Agent evaluation control plane, runner, graders, API, CLI and Portal"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+terminal-bench = ["harbor==0.22.0"]
+
+[project.scripts]
+agent-eval = "agent_eval.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_eval*"]
+
+[tool.setuptools.package-data]
+agent_eval = ["static/*.html", "static/*.js", "dsh_process_guard.js"]

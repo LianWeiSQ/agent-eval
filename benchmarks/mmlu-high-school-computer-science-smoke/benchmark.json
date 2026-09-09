@@ -1,0 +1,19 @@
+{
+  "benchmark_id": "mmlu-high-school-computer-science-smoke",
+  "name": "MMLU 高中计算机科学 20 题（DSH）",
+  "version": "1.0.1",
+  "benchmark_type": "general",
+  "description": "从公开 cais/mmlu 的 high_school_computer_science/test split 固化的 20 条无工具选择题，用于真实 DSH 小成本回归。",
+  "dataset": "cases.jsonl",
+  "pass_threshold": 80,
+  "source": "https://huggingface.co/datasets/cais/mmlu",
+  "license": "MIT",
+  "visibility": "private",
+  "source_metadata": {
+    "dataset": "cais/mmlu",
+    "config": "high_school_computer_science",
+    "split": "test",
+    "offset": 0,
+    "count": 20
+  }
+}

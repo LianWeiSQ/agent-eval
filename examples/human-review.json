@@ -1,0 +1,12 @@
+{
+  "score": 85,
+  "verdict": "pass",
+  "reason": "最终输出满足任务约束，关键结论均能定位到工具事件和 AgentRun Artifact。",
+  "issue_types": [
+    "minor_formatting"
+  ],
+  "evidence_refs": [
+    "event:3",
+    "artifact-replace-with-real-id"
+  ]
+}

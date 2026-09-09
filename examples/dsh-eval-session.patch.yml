@@ -1,0 +1,7 @@
+# Per-trial overlay for the local Agent Eval runner.
+# Keep DSH credentials and model settings in the user's normal DSH home, while
+# writing an uncompressed, isolated event log that the evaluator can ingest.
+- id: session-persistence-jsonl
+  config:
+    root: !!js process.env.DSH_EVAL_SESSION_ROOT
+    compression: none
