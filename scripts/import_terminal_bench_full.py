@@ -21,7 +21,7 @@ from agent_eval.terminal_bench import INTEGRATION_FILES, task_digest
 COMMIT = "7131e4375048a0e408a8fb404b5f499d726b695b"
 TASK_COUNT = 89
 SOURCE = "https://github.com/harbor-framework/terminal-bench-2-1"
-SNAPSHOT_VERSION = "1.2.3-dev.1"
+SNAPSHOT_VERSION = "1.2.4"
 SNAPSHOT_NAME = "DSH · Terminal-Bench 完整集 / Harbor"
 
 
@@ -105,7 +105,7 @@ def build_package(tasks_root: Path, names: list[str]) -> dict:
         })
     package = {"manifest": {
         "id": "terminal-bench-2.1-full", "name": f"Terminal-Bench 2.1 · 完整集（{len(tasks)}题）",
-        "version": "2.1.0-full.1", "benchmark_type": "general", "pass_threshold": 100,
+        "version": "2.1.0-full.2", "benchmark_type": "general", "pass_threshold": 100,
         "source": SOURCE, "source_commit": COMMIT,
         "description": "All 89 tasks at the pinned upstream commit, with original instructions, environments and official verifiers. Registration does not mean a full run has completed.",
     }, "tasks": tasks, "fixture": {}}
@@ -119,28 +119,53 @@ def snapshot_config(
     package: dict,
     *,
     python_executable: Path | None = None,
+    agent_profile: dict | None = None,
+    reasoning_effort: str | None = None,
+    base_url: str | None = None,
+    auth_mode: str = "api-key",
 ) -> dict:
-    runtime = ROOT / ".terminal-bench/runtime-cache/dsh-runtime.tgz"
     python = python_executable or ROOT / (
         ".terminal-bench-venv/Scripts/python.exe" if sys.platform == "win32" else ".terminal-bench-venv/bin/python"
     )
-    if not runtime.is_file() or not python.is_file():
-        raise RuntimeError("Pinned Harbor Python or DSH runtime is missing")
-    with runtime.open("rb") as stream:
-        runtime_hash = hashlib.file_digest(stream, "sha256").hexdigest()
-    return {"python": str(python), "dataset_root": str(tasks_root.resolve()),
+    if not python.is_file():
+        raise RuntimeError("Pinned Harbor Python is missing")
+    profile = agent_profile or {
+        "id": "dsh-deepseek-v4-flash", "harness": "dsh", "provider": "deepseek-official",
+        "model": "deepseek-official/deepseek-v4-flash", "api_key_env": "DEEPSEEK_API_KEY",
+    }
+    config = {"python": str(python), "dataset_root": str(tasks_root.resolve()),
         "benchmark_id": package["manifest"]["id"],
         "output_root": str(data_dir.resolve() / "terminal-bench"),
         "runner_timeout_seconds": max(task["timeout_seconds"] for task in package["tasks"]),
         "environment_build_timeout_multiplier": 3.0,
         "harbor_version": "0.22.0", "dsh_version": "0.1.1-rc.2",
-        "model": "deepseek-official/deepseek-v4-flash", "permission_boundary": "disposable-task-container",
-        "dataset_commit": COMMIT, "runtime_archive_sha256": runtime_hash,
+        "model_profile": profile["id"], "harness": profile["harness"],
+        "provider": profile["provider"], "model": profile["model"],
+        "api_key_env": profile["api_key_env"],
+        "permission_boundary": "disposable-task-container",
+        "dataset_commit": COMMIT,
         "integration_files": list(INTEGRATION_FILES),
-        "classification_version": "2.0.0", "process_boundary": "confirmed-container-termination-v1",
-        "verifier_preflight_tasks": {"nginx-request-logging": "uv", "qemu-startup": "uv",
-            "qemu-alpine-ssh": "uv", "cobol-modernization": "uv", "largest-eigenval": "pip"},
+        "classification_version": "2.1.0", "process_boundary": "confirmed-container-termination-v2",
+        "environment_cleanup": "verified-runtime-resources-v1", "image_cache": "retain-prebuilt-images",
         "integration_digest": content_hash({name: (ROOT / name).read_text(encoding="utf-8") for name in INTEGRATION_FILES})}
+    if profile["harness"] == "dsh":
+        runtime = ROOT / ".terminal-bench/runtime-cache/dsh-runtime.tgz"
+        if not runtime.is_file():
+            raise RuntimeError("Pinned DSH runtime is missing")
+        with runtime.open("rb") as stream:
+            config["runtime_archive_sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+    else:
+        config.update({
+            "auth_mode": auth_mode,
+            "wire_api": "responses",
+            "reasoning_effort": reasoning_effort or profile["default_reasoning_effort"],
+            "disable_response_storage": True,
+            "codex_version": profile.get("codex_version", "0.154.0"),
+            "process_boundary": "harbor-container-lifecycle-v1",
+        })
+        if auth_mode == "api-key":
+            config["base_url"] = str(base_url or "").rstrip("/")
+    return config
 
 
 def api(base: str, path: str, payload: dict | None = None) -> dict | list:

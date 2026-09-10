@@ -313,8 +313,18 @@ def grade_trial(
     required_failures = [grade for grade, spec in zip(grades, specs) if grade["status"] == "failed" and bool(spec.get("required", True))]
     if required_failures:
         issue = (run.get('official_verification') or {}).get('error_code') or 'grader_failed'
-        infrastructure = issue in {'verifier_setup_failed','agent_termination_failed','agent_boundary_violation','agent_boundary_unverified','harbor_runtime_error'}
-        return {"grades": grades, "score": None, "outcome": "infra_failed" if infrastructure else "grader_failed", "failure_type": issue, 'failure_stage': 'auto_grading', "hard_failures": [], "needs_review": False}
+        infrastructure = issue in {
+            'verifier_setup_failed', 'verifier_timeout', 'verifier_failed',
+            'environment_setup_failed', 'agent_setup_failed', 'agent_execution_failed',
+            'agent_termination_failed', 'agent_boundary_violation',
+            'agent_boundary_unverified', 'harbor_runtime_error',
+        }
+        failure_stage = {
+            'environment_setup_failed': 'environment_preparing',
+            'agent_setup_failed': 'environment_preparing',
+            'agent_execution_failed': 'agent_running',
+        }.get(issue, 'auto_grading')
+        return {"grades": grades, "score": None, "outcome": "infra_failed" if infrastructure else "grader_failed", "failure_type": issue, 'failure_stage': failure_stage, "hard_failures": [], "needs_review": False}
     weighted = [(float(grade["score"]), float(spec.get("weight", 1.0))) for grade, spec in zip(grades, specs) if grade["score"] is not None and grade["status"] == "completed"]
     if not weighted:
         return {"grades": grades, "score": None, "outcome": "grader_failed", "failure_type": "grader_failed", "hard_failures": [], "needs_review": False}

@@ -44,6 +44,7 @@ class EvaluationService:
         self._threads: dict[str, threading.Thread] = {}
         self._cancel_events: dict[str, threading.Event] = {}
         self._manager_lock = threading.Lock()
+        self._last_terminal_bench_cleanup: list[dict[str, Any]] = []
 
     def close(self, timeout: float = 5.0) -> None:
         """Wait for managed background jobs before releasing a temporary data directory."""
@@ -280,18 +281,34 @@ class EvaluationService:
             "usage": run.get("usage") or {},
         }
 
-    # Terminal-Bench / Harbor provisioning and direct DeepSeek Harness runs
+    # Terminal-Bench / Harbor provisioning and model-selectable runs
     def terminal_bench_status(self, actor: Actor) -> dict[str, Any]:
         from .harbor_setup import terminal_bench_status
 
-        return terminal_bench_status(self.project_root, self.list_benchmarks(actor), self.list_snapshots(actor))
+        status = terminal_bench_status(self.project_root, self.list_benchmarks(actor), self.list_snapshots(actor))
+        status["environment_cleanup"] = {
+            "policy": "remove containers, networks and volumes; retain task images",
+            "last_startup_reap": self._last_terminal_bench_cleanup,
+        }
+        return status
 
-    def prepare_terminal_bench(self, actor: Actor) -> dict[str, Any]:
+    def prepare_terminal_bench(
+        self,
+        actor: Actor,
+        *,
+        model_profile: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> dict[str, Any]:
         require_role(actor.role, ADMIN_ROLES | {"project_operator"})
         from .harbor_setup import HarborSetupError, prepare_terminal_bench
 
         try:
-            registration = prepare_terminal_bench(self, actor)
+            registration = prepare_terminal_bench(
+                self,
+                actor,
+                model_profile=model_profile,
+                reasoning_effort=reasoning_effort,
+            )
         except (HarborSetupError, RuntimeError, OSError) as exc:
             raise EvalError("terminal_bench_setup_failed", str(exc), status=409) from exc
         self._audit(
@@ -305,16 +322,26 @@ class EvaluationService:
 
     def start_terminal_bench_evaluation(self, actor: Actor, payload: dict[str, Any]) -> dict[str, Any]:
         require_role(actor.role, ADMIN_ROLES | {"project_operator"})
-        registration = self.prepare_terminal_bench(actor)
+        from .harbor_setup import DEFAULT_MODEL_PROFILE
+
+        model_profile = str(payload.get("model_profile") or DEFAULT_MODEL_PROFILE)
+        reasoning_effort = str(payload["reasoning_effort"]) if payload.get("reasoning_effort") else None
+        registration = self.prepare_terminal_bench(
+            actor,
+            model_profile=model_profile,
+            reasoning_effort=reasoning_effort,
+        )
         status = self.terminal_bench_status(actor)
         components = status["components"]
-        if not components["deepseek_credential"]["available"]:
+        profile_status = next((item for item in status.get("model_profiles", []) if item["id"] == model_profile), None)
+        if profile_status is not None and not profile_status["available"]:
+            credential_name = profile_status["api_key_env"]
             raise EvalError(
-                "deepseek_credential_missing",
-                "未找到 DEEPSEEK_API_KEY；请设置环境变量，或先用 DeepSeek Harness 登录并写入凭据。",
+                "model_not_ready",
+                f"模型 {profile_status['model']} 尚不可用；请检查 {credential_name}、Docker 和对应运行环境。",
                 status=409,
             )
-        if not status["ready"]:
+        if profile_status is None and not status["ready"]:
             raise EvalError(
                 "terminal_bench_not_ready",
                 "Harbor / Docker / Terminal-Bench 运行环境尚未就绪，请查看状态接口中的 components。",
@@ -367,10 +394,11 @@ class EvaluationService:
         job = self.create_job(
             actor,
             {
-                "name": str(payload.get("name") or "DeepSeek Harness · Terminal-Bench 评估"),
+                "name": str(payload.get("name") or f"{registration.get('model') or 'Agent'} · Terminal-Bench 评估"),
                 "benchmark_id": benchmark["id"],
                 "agent_snapshot_ids": [registration["agent_snapshot_id"]],
                 "task_filter": {"task_ids": selected_task_ids},
+                "confirm_full_run": payload.get("confirm_full_run") is True,
                 "execution": {
                     "repetitions": repetitions,
                     "max_concurrency": max_concurrency,
@@ -381,7 +409,8 @@ class EvaluationService:
             },
         )
         started = self.start_job(actor, job["id"])
-        return {"job": started, "registration": registration, "selected_task_ids": selected_task_ids}
+        return {"job": started, "registration": registration, "selected_task_ids": selected_task_ids,
+                "model_profile": model_profile, "reasoning_effort": registration.get("reasoning_effort")}
 
     # Jobs and trials
     def estimate_job(self, actor: Actor, payload: dict[str, Any]) -> dict[str, Any]:
@@ -412,6 +441,18 @@ class EvaluationService:
         estimate = self.estimate_job(actor, payload)
         if estimate["trial_count"] == 0:
             raise EvalError("invalid_job", "筛选后没有可运行 Trial")
+        manifest_id = (benchmark.get("package") or {}).get("manifest", {}).get("id")
+        full_terminal_bench = (
+            manifest_id == "terminal-bench-2.1-full"
+            and len(benchmark["package"]["tasks"]) > 1
+            and estimate["task_count"] == len(benchmark["package"]["tasks"])
+        )
+        if full_terminal_bench and payload.get("confirm_full_run") is not True:
+            raise EvalError(
+                "full_run_confirmation_required",
+                "完整 Terminal-Bench 会为 89 题分别启动隔离容器并产生真实模型调用；请通过 Agent / Harbor 评测入口选择任务，或显式设置 confirm_full_run=true",
+                status=409,
+            )
         compatibility_mode = str(payload.get("compatibility_mode") or "strict")
         if compatibility_mode not in {"strict", "allow"}:
             raise EvalError("invalid_job", "compatibility_mode 必须是 strict 或 allow")
@@ -1216,6 +1257,17 @@ class EvaluationService:
         }
 
     def recover_jobs(self) -> list[str]:
+        from .docker_cleanup import reap_output_root
+
+        cleanup_reports: list[dict[str, Any]] = []
+        snapshots = self.database.all("SELECT * FROM agent_snapshots WHERE adapter_type='terminal-bench-harbor'")
+        output_roots = {
+            str((snapshot.get("config") or {}).get("output_root") or "")
+            for snapshot in snapshots
+        }
+        for output_root in sorted(value for value in output_roots if value):
+            cleanup_reports.extend(reap_output_root(Path(output_root)))
+        self._last_terminal_bench_cleanup = cleanup_reports[-100:]
         jobs = self.database.all("SELECT * FROM jobs WHERE status IN ('queued','running','grading','canceling')")
         recovered = []
         for job in jobs:
@@ -1396,6 +1448,10 @@ class EvaluationService:
                 "content_hash": content_hash(environment_spec),
                 "spec": environment_spec,
             }
+            if run.get("environment_image"):
+                run["environment_snapshot"]["resolved_image"] = run["environment_image"]
+            if run.get("environment_cleanup"):
+                run["environment_snapshot"]["cleanup"] = run["environment_cleanup"]
             self.database.update("trials", trial_id, {"execution_status": "collecting", "updated_at": utc_now()})
             artifact = self._write_artifact(trial, "agent_run", run)
             run["artifacts"] = list(run.get("artifacts") or []) + [artifact["id"]]
@@ -1435,7 +1491,7 @@ class EvaluationService:
         except AdapterFailure as exc:
             if exc.failure_type == "canceled":
                 changes = {"execution_status": "canceled", "outcome": None}
-            elif exc.stage == "environment_preparing" or exc.failure_type in {"provider_rate_limited", "provider_unavailable"}:
+            elif snapshot.get("adapter_type") == "terminal-bench-harbor" or exc.stage == "environment_preparing" or exc.failure_type in {"provider_rate_limited", "provider_unavailable"}:
                 changes = {"execution_status": "failed", "outcome": "infra_failed", "score": None}
             else:
                 changes = {"execution_status": "failed", "outcome": "agent_failed", "score": 0.0}

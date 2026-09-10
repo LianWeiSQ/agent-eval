@@ -89,7 +89,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/api/v1/terminal-bench/status":
             return service.terminal_bench_status(actor), 200
         if method == "POST" and path == "/api/v1/terminal-bench/setup":
-            return service.prepare_terminal_bench(actor), 200
+            return service.prepare_terminal_bench(
+                actor,
+                model_profile=body.get("model_profile"),
+                reasoning_effort=body.get("reasoning_effort"),
+            ), 200
         if method == "POST" and path == "/api/v1/terminal-bench/evaluations":
             return service.start_terminal_bench_evaluation(actor, body), 202
 

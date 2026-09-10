@@ -1,0 +1,11 @@
+.git
+.gitignore
+.data
+.terminal-bench
+.terminal-bench-venv
+.venv
+__pycache__
+*.py[cod]
+*.sqlite*
+*.log
+benchmarks/terminal-bench-2.1-full

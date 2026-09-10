@@ -28,9 +28,11 @@ class TerminalBenchImportTest(unittest.TestCase):
             self.assertEqual(config['python'], str(python))
             self.assertIn('agent_eval/dsh_process_guard.js', config['integration_files'])
             self.assertIn('agent_eval/dsh_trajectory.py', config['integration_files'])
+            self.assertIn('agent_eval/docker_cleanup.py', config['integration_files'])
             self.assertEqual(config['runner_timeout_seconds'], 9000)
             self.assertEqual(config['environment_build_timeout_multiplier'], 3.0)
-            self.assertEqual(config['verifier_preflight_tasks']['largest-eigenval'], 'pip')
+            self.assertEqual(config['environment_cleanup'], 'verified-runtime-resources-v1')
+            self.assertEqual(config['image_cache'], 'retain-prebuilt-images')
 
     def test_snapshot_config_accepts_backend_python_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -50,6 +52,31 @@ class TerminalBenchImportTest(unittest.TestCase):
                     python_executable=python,
                 )
             self.assertEqual(config['python'], str(python))
+
+    def test_codex_auth_snapshot_records_mode_without_endpoint_or_secret_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python = root / 'backend-python.exe'
+            python.write_bytes(b'placeholder')
+            for name in importer.INTEGRATION_FILES:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('# frozen '+name, encoding='utf-8')
+            profile = {
+                'id': 'codex-gpt-5.6-sol', 'harness': 'codex', 'provider': 'openai',
+                'model': 'gpt-5.6-sol', 'api_key_env': 'OPENAI_API_KEY',
+                'default_reasoning_effort': 'xhigh', 'codex_version': '0.154.0',
+            }
+            with patch.object(importer, 'ROOT', root):
+                config = importer.snapshot_config(
+                    root/'tasks', root/'.data',
+                    {'manifest': {'id': 'full'}, 'tasks': [{'timeout_seconds': 9000}]},
+                    python_executable=python, agent_profile=profile,
+                    reasoning_effort='xhigh', auth_mode='codex-auth-json',
+                )
+            self.assertEqual(config['auth_mode'], 'codex-auth-json')
+            self.assertNotIn('base_url', config)
+            self.assertNotIn('auth.json', str(config))
 
     def test_snapshot_uses_commit_and_preserves_existing_content(self):
         with tempfile.TemporaryDirectory() as directory:

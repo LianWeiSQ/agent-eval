@@ -9,6 +9,7 @@ from typing import Sequence
 
 from .adapters import ADAPTERS
 from .benchmark import load_package
+from .harbor_setup import DEFAULT_MODEL_PROFILE
 from .service import Actor, EvaluationService
 
 
@@ -54,13 +55,17 @@ def _parser() -> argparse.ArgumentParser:
     snapshot_list = subparsers.add_parser("snapshot-list", help="List AgentSnapshots.")
     snapshot_list.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
 
-    terminal_status = subparsers.add_parser("terminal-bench-status", help="Check Harbor and DeepSeek Harness readiness.")
+    terminal_status = subparsers.add_parser("terminal-bench-status", help="Check Harbor and model profile readiness.")
     terminal_status.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
 
-    terminal_setup = subparsers.add_parser("terminal-bench-setup", help="Prepare and register Terminal-Bench, Harbor and DeepSeek Harness.")
+    terminal_setup = subparsers.add_parser("terminal-bench-setup", help="Prepare and register a Terminal-Bench model profile.")
+    terminal_setup.add_argument("--model-profile", default=DEFAULT_MODEL_PROFILE)
+    terminal_setup.add_argument("--reasoning-effort")
     terminal_setup.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
 
-    terminal_run = subparsers.add_parser("terminal-bench-run", help="Prepare and start a DeepSeek Harness evaluation through Harbor.")
+    terminal_run = subparsers.add_parser("terminal-bench-run", help="Prepare and start a model-selectable evaluation through Harbor.")
+    terminal_run.add_argument("--model-profile", default=DEFAULT_MODEL_PROFILE)
+    terminal_run.add_argument("--reasoning-effort")
     terminal_run.add_argument("--task", action="append", help="Terminal-Bench task name; repeat for multiple tasks.")
     terminal_run.add_argument("--all-tasks", action="store_true", help="Run all 89 tasks.")
     terminal_run.add_argument("--confirm-full-run", action="store_true", help="Required together with --all-tasks.")
@@ -149,13 +154,17 @@ def _platform_command(args: argparse.Namespace) -> int:
         print(json.dumps(service.terminal_bench_status(actor), ensure_ascii=False, indent=2))
         return 0
     if args.command == "terminal-bench-setup":
-        print(json.dumps(service.prepare_terminal_bench(actor), ensure_ascii=False, indent=2))
+        print(json.dumps(service.prepare_terminal_bench(
+            actor, model_profile=args.model_profile, reasoning_effort=args.reasoning_effort
+        ), ensure_ascii=False, indent=2))
         return 0
     if args.command == "terminal-bench-run":
         result = service.start_terminal_bench_evaluation(
             actor,
             {
                 "task_names": args.task,
+                "model_profile": args.model_profile,
+                "reasoning_effort": args.reasoning_effort,
                 "all_tasks": args.all_tasks,
                 "confirm_full_run": args.confirm_full_run,
                 "repetitions": args.repetitions,

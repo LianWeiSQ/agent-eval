@@ -78,12 +78,14 @@ def main() -> None:
               "runner_timeout_seconds": 3300, "harbor_version": "0.22.0", "dsh_version": "0.1.1-rc.2",
               "model": "deepseek-official/deepseek-v4-flash", "permission_boundary": "disposable-task-container",
               "dataset_commit": COMMIT,
+              "classification_version": "2.1.0", "process_boundary": "confirmed-container-termination-v2",
+              "environment_cleanup": "verified-runtime-resources-v1", "image_cache": "retain-prebuilt-images",
               "runtime_archive_sha256": runtime_hash,
               "integration_files": list(INTEGRATION_FILES),
               "integration_digest": content_hash({name: (ROOT / name).read_text(encoding="utf-8") for name in INTEGRATION_FILES})}
     snapshot = next((s for s in service.list_snapshots(actor) if s["adapter_type"] == "terminal-bench-harbor" and s["config_hash"] == content_hash(config)), None)
     if snapshot is None:
-        snapshot = service.create_snapshot(actor, {"name": "DSH · Terminal-Bench / Harbor", "version": "1.2.3-dev.1",
+        snapshot = service.create_snapshot(actor, {"name": "DSH · Terminal-Bench / Harbor", "version": "1.2.4-dev.1",
                                                   "adapter_type": "terminal-bench-harbor", "config": config})
     registry = {"benchmark_id": benchmark["id"], "agent_snapshot_id": snapshot["id"],
                 "source_commit": COMMIT, "task_names": TASKS}

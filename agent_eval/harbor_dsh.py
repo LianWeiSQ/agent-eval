@@ -18,6 +18,14 @@ DSH_VERSION = "0.1.1-rc.2"
 NODE_VERSION = "22.19.0"
 
 
+async def _capture_execution(awaitable):
+    """Keep a shielded Docker exec failure as data so cancellation logs stay clean."""
+    try:
+        return None, await awaitable
+    except BaseException as error:
+        return error, None
+
+
 class DshAgent(BaseInstalledAgent):
     """Uses DSH's actual tools inside the task, never a proxy answer generator."""
 
@@ -28,14 +36,15 @@ class DshAgent(BaseInstalledAgent):
     def version(self) -> str:
         return DSH_VERSION
 
-    def __init__(self, *args, verifier_preflight=None, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.verifier_preflight = verifier_preflight
         self.guard_directory = '/logs/agent/guard-' + uuid.uuid4().hex
 
     def agent_command(self, instruction: str) -> list[str]:
+        # `--` is consumed by Commander and guarantees that task text beginning
+        # with a dash is a positional instruction rather than a CLI option.
         return ['/installed-agent/dsh/node_modules/.bin/dsh', '--profile', 'headless',
-                '--patch', '/installed-agent/dsh.patch.yml', instruction]
+                '--patch', '/installed-agent/dsh.patch.yml', '--', instruction]
 
     async def install(self, environment: BaseEnvironment) -> None:
         cache = Path(__file__).resolve().parents[1] / ".terminal-bench/runtime-cache"
@@ -48,12 +57,18 @@ class DshAgent(BaseInstalledAgent):
             "tar -xzf /installed-agent/runtime.tgz -C /installed-agent && "
             "cp /installed-agent/dsh/package-lock.json /logs/agent/dsh-package-lock.json"
         ), timeout_sec=300)
+        model_name = self.model_name or "deepseek-official/deepseek-v4-flash"
+        if "/" not in model_name:
+            raise RuntimeError("DSH model_name must be provider/model")
+        provider, model = model_name.split("/", 1)
+        if not provider or not model:
+            raise RuntimeError("DSH model_name must be provider/model")
         patch = self.logs_dir / "dsh.patch.yml"
         patch.write_text(
             "- id: session-persistence-jsonl\n  config:\n"
             "    root: /logs/agent/sessions\n    compression: none\n"
             "- id: agent-default-model\n  config:\n"
-            "    provider: deepseek-official\n    model: deepseek-v4-flash\n",
+            f"    provider: {json.dumps(provider)}\n    model: {json.dumps(model)}\n",
             encoding="utf-8",
         )
         await environment.upload_file(patch, "/installed-agent/dsh.patch.yml")
@@ -61,22 +76,6 @@ class DshAgent(BaseInstalledAgent):
             "mkdir -p /logs/agent/sessions /tmp/dsh-home && "
             "chmod -R a+rwX /logs/agent /tmp/dsh-home"
         ))
-        if self.verifier_preflight:
-            # Prepare public test dependencies before the agent clock starts. Official tests remain unchanged.
-            setup = (
-                'set -eu; export DEBIAN_FRONTEND=noninteractive UV_HTTP_TIMEOUT=90; '
-                'apt-get -o Acquire::Retries=3 update; '
-                'apt-get -o Acquire::Retries=3 install -y curl expect; '
-                'curl --fail --retry 3 --connect-timeout 20 --max-time 120 -LsS '
-                'https://astral.sh/uv/0.9.5/install.sh -o /tmp/eval-uv-install.sh; '
-                'sh /tmp/eval-uv-install.sh; '
-                '/root/.local/bin/uvx -p 3.13 -w pytest==8.4.1 -w pytest-json-ctrf==0.3.5 '
-                '-w requests==2.32.4 pytest --version'
-            ) if self.verifier_preflight == 'uv' else (
-                'python -m pip install --retries 3 --timeout 90 --break-system-packages '
-                'pytest==8.4.1 pytest-json-ctrf==0.3.5'
-            )
-            await self.exec_as_root(environment, command='('+setup+') > /logs/agent/verifier-preflight.log 2>&1', timeout_sec=600)
 
     @with_prompt_template
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
@@ -100,9 +99,13 @@ class DshAgent(BaseInstalledAgent):
             shlex.quote(self.guard_directory) + ' ' + shlex.join(self.agent_command(instruction)) +
             " > /logs/agent/dsh.stdout.txt 2> /logs/agent/dsh.stderr.txt"
         )
-        execution = asyncio.create_task(self.exec_as_agent(environment, command=command, env=agent_env))
+        execution = asyncio.create_task(_capture_execution(
+            self.exec_as_agent(environment, command=command, env=agent_env)
+        ))
         try:
-            await asyncio.shield(execution)
+            execution_error, _ = await asyncio.shield(execution)
+            if execution_error is not None:
+                raise execution_error
         except BaseException:
             # Harbor's cancellation of docker exec does not terminate the container process.
             # Wait for verified remote termination before returning control to the verifier.
@@ -116,8 +119,6 @@ class DshAgent(BaseInstalledAgent):
                     await asyncio.wait_for(asyncio.shield(execution), timeout=15)
                 except asyncio.TimeoutError:
                     execution.cancel()
-                except Exception:
-                    pass
             except Exception as error:
                 execution.cancel()
                 raise RuntimeError('AgentTerminationError: refusing to start verification without confirmed termination') from error

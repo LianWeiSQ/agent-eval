@@ -14,7 +14,7 @@
 | Adapter | `adapters.py` | DSH、Harbor、HTTP Runtime、示例及模型接口 |
 | 轨迹 | `dsh_trajectory.py` | JSONL 会话归一化、工具事件与用量 |
 | 评分 | `grading_pipeline.py`、`graders.py` | 规则、Schema、可执行评分、LLM、官方结果 |
-| Terminal-Bench | `terminal_bench.py`、`harbor_dsh.py` | 固定任务摘要、官方评分采信、进程边界 |
+| Terminal-Bench | `terminal_bench.py`、`harbor_dsh.py`、`run_harbor_trial.py` | 模型执行配置、轨迹归一化、官方评分采信、进程边界 |
 | 独立监督 | `supervision.py`、监督 Adapter | 结构化建议与人工批准后的纠错 |
 
 ## 数据模型
@@ -30,7 +30,7 @@
 
 ## Terminal-Bench 执行与可信评分
 
-Harbor 在隔离的 Docker Linux 容器中运行 DSH。官方测试在执行阶段结束后运行，执行 Agent 自称成功不能替代测试结果。
+Harbor 在每道题的隔离 Docker Linux 容器中运行所选 Agent。Codex 配置通过 Responses API 调用 OpenAI 兼容服务；DSH 配置保留为可选模型。官方测试在执行阶段结束后运行，执行 Agent 自称成功不能替代测试结果。
 
 超时、取消或异常退出时，进程守卫根据本任务启动前的进程基线终止新进程，并确认无残留后交回控制。无法确认停止时阻止评分。采集时同时核对终止时间、评分时间和工具调用时间。
 

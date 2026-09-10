@@ -16,9 +16,9 @@ python -m pip install -e ".[terminal-bench]"
 python -m agent_eval serve --host 127.0.0.1 --port 8765 --data-dir .data
 ```
 
-打开 <http://127.0.0.1:8765/>。基础 Portal、API、SQLite 使用 Python 标准库；首次仅初始化 MMLU 和 DSH / Supervisor 配置，不会自动调用付费模型。点击“DSH / Harbor 评测”可以由后台自动准备并注册 Terminal-Bench、Harbor 和固定 DSH 运行包，再直接启动指定任务。Windows 也可在已激活的终端执行 `./scripts/evaluation-service.ps1`。
+打开 <http://127.0.0.1:8765/>。基础 Portal、API、SQLite 使用 Python 标准库；首次仅初始化 MMLU 和 DSH / Supervisor 配置，不会自动调用付费模型。点击“Agent / Harbor 评测”可以选择模型和推理强度，由后台自动准备并注册 Terminal-Bench、Harbor 和执行快照，再直接启动指定任务。默认评测模型为 `gpt-5.6-sol`，推理强度为 `xhigh`。Windows 也可在已激活的终端执行 `./scripts/evaluation-service.ps1`。
 
-详细操作见 [使用说明](docs/USAGE.md)。真实 Terminal-Bench 需要 Docker Linux 容器、`harbor==0.22.0` 和 DeepSeek 模型凭据；任务集与固定 DSH 运行包可由后台自动准备，细节见 [Terminal-Bench 接入](docs/TERMINAL_BENCH.md)。
+详细操作见 [使用说明](docs/USAGE.md)。真实 Terminal-Bench 需要 Docker Linux 容器、Docker Compose v2、`harbor==0.22.0` 和所选模型的凭据；Codex 配置支持只读 `auth.json` 或 `OPENAI_API_KEY`，DSH 配置使用 `DEEPSEEK_API_KEY`。任务集与可选的固定 DSH 运行包可由后台自动准备，细节见 [Terminal-Bench 接入](docs/TERMINAL_BENCH.md)。
 
 ## 工作流程
 
@@ -47,7 +47,7 @@ Benchmark + AgentSnapshot
 | `tests/` | 平台、评分、监督、轨迹及前端回归测试 |
 | `docs/` | 使用、架构、接口、Terminal-Bench 和已知限制 |
 
-Terminal-Bench 的完整任务、生成的导入包和运行器缓存在本地按需准备。通用调度、评分和审核测试使用测试函数内构造的最小输入，不依赖其他 Benchmark 目录。保留 DSH、Terminal-Bench / Harbor、独立 Supervisor、通用 Runtime HTTP 与测试用 Echo。论文检索执行器、论文专用评分、Core Fixture 演示执行器和旧论文评测命令已移除。
+Terminal-Bench 的完整任务、生成的导入包和运行器缓存在本地按需准备。通用调度、评分和审核测试使用测试函数内构造的最小输入，不依赖其他 Benchmark 目录。保留 Codex、DSH、Terminal-Bench / Harbor、独立 Supervisor、通用 Runtime HTTP 与测试用 Echo。论文检索执行器、论文专用评分、Core Fixture 演示执行器和旧论文评测命令已移除。
 
 ## 测试
 

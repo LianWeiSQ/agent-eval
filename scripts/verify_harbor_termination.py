@@ -39,7 +39,7 @@ timeout_sec=3
 [verifier]
 timeout_sec=20
 [environment]
-docker_image="alexgshaw/regex-chess:20251031"
+docker_image="alexgshaw/openssl-selfsigned-cert:20251031"
 cpus=1
 memory_mb=1024
 ''',encoding='utf-8')

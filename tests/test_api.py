@@ -75,7 +75,7 @@ class EvaluationApiTest(unittest.TestCase):
         self.assertEqual(dashboard["counts"]["snapshots"], 2)
         self.assertIn("Agent Eval 评测", portal)
         self.assertIn("执行轨迹", portal)
-        self.assertIn("DSH / Harbor 评测", portal)
+        self.assertIn("Agent / Harbor 评测", portal)
         snapshots = self.service.list_snapshots(Actor())
         supervisor = next(item for item in snapshots if item["adapter_type"] == "llm-supervisor")
         self.assertEqual(supervisor["version"], "1.3.2")

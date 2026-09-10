@@ -193,6 +193,11 @@ async function updateJobCompatibility() {
   try {
     const estimate=await api('/jobs/estimate',{method:'POST',body:JSON.stringify({benchmark_id:form.get('benchmark_id'),agent_snapshot_ids:ids,execution:{repetitions:+form.get('repetitions'),max_concurrency:+form.get('max_concurrency')}})});
     if(request!==compatibilityRequest) return false;
+    const benchmark=state.benchmarks.find(item=>item.id===form.get('benchmark_id'));
+    if(benchmark?.package?.manifest?.id==='terminal-bench-2.1-full' && estimate.task_count>1){
+      message.textContent=`这会为完整 ${estimate.task_count} 题分别启动隔离容器。请关闭本窗口，使用“Agent / Harbor 评测”指定单题；全量运行需在那里显式确认。`;
+      message.style.color='var(--bad)';return false;
+    }
     const compatible=estimate.compatibility.compatible;
     if(compatible){
       const terminalIds=ids.filter(id=>state.snapshots.find(s=>s.id===id)?.adapter_type==='terminal-bench-harbor');
@@ -324,21 +329,39 @@ async function benchmarkAction(id,action) {try{await api(`/benchmarks/${id}/${ac
 async function health(id) {try{const result=await api(`/agent-snapshots/${id}/health`);jsonDetail('Agent 连接检查',encodeURIComponent(JSON.stringify(result)));}catch(error){toast(error.message,true);}}
 function harborStatusText(value) {
   const components=value?.components||{}, lines=[value?.ready?'环境已就绪，可直接启动评测。':'环境尚未完全就绪，首次启动会自动准备。'];
-  for(const [label,key] of [['Harbor','harbor'],['Docker Linux','docker'],['Terminal-Bench','terminal_bench_source'],['DSH 运行包','dsh_runtime'],['DeepSeek 凭据','deepseek_credential'],['评测注册','registration']]) {
-    const item=components[key]||{},ready=key==='docker'?item.linux:item.available;
+  for(const [label,key] of [['Harbor','harbor'],['Docker Linux','docker'],['Terminal-Bench','terminal_bench_source'],['OpenAI 凭据','openai_credential'],['DSH 运行包','dsh_runtime'],['DeepSeek 凭据','deepseek_credential'],['默认模型注册','registration']]) {
+    const item=components[key]||{},ready=key==='docker'?(item.linux&&item.compose):item.available;
     lines.push(`${ready?'✓':'○'} ${label}${item.version?' '+item.version:''}${item.message?'：'+item.message:''}`);
   }
   return lines.join('\n');
 }
+function updateHarborReasoning() {
+  const model=state.harborStatus?.model_profiles?.find(item=>item.id===$('harborModel').value);
+  const select=$('harborReasoning'),previous=select.value;
+  select.replaceChildren(...(model?.reasoning_efforts||[]).map(value=>new Option(value,value)));
+  select.disabled=!model?.reasoning_efforts?.length;
+  if(model?.reasoning_efforts?.includes(previous))select.value=previous;
+  else if(model?.default_reasoning_effort)select.value=model.default_reasoning_effort;
+}
+function populateHarborModels(value) {
+  const select=$('harborModel'),previous=select.value;
+  select.replaceChildren(...(value?.model_profiles||[]).map(item=>{
+    const option=new Option(item.label+(item.available?'':'（凭据未就绪）'),item.id);
+    return option;
+  }));
+  select.value=(value?.model_profiles||[]).some(item=>item.id===previous)?previous:value.default_model_profile;
+  updateHarborReasoning();
+}
 async function loadHarborStatus() {
   $('harborStatus').textContent='正在检查 Harbor 环境…';
-  try {const value=await api('/terminal-bench/status');state.harborStatus=value;$('harborStatus').textContent=harborStatusText(value);}
+  try {const value=await api('/terminal-bench/status');state.harborStatus=value;populateHarborModels(value);$('harborStatus').textContent=harborStatusText(value);}
   catch(error){$('harborStatus').textContent='环境检查失败：'+error.message;}
 }
 function openHarborDialog(){openDialog('harborDialog');loadHarborStatus();}
 async function prepareHarbor(){
-  const button=$('harborPrepare');button.disabled=true;$('harborStatus').textContent='正在下载并准备 Terminal-Bench、Harbor 和 DSH 运行包，首次执行可能需要几分钟…';
-  try{const result=await api('/terminal-bench/setup',{method:'POST',body:'{}'});toast(`Harbor 环境已准备：${result.task_count} 题`);await refreshAll();await loadHarborStatus();}
+  const button=$('harborPrepare'),model=$('harborModel').value,effort=$('harborReasoning').disabled?null:$('harborReasoning').value;
+  button.disabled=true;$('harborStatus').textContent='正在准备 Terminal-Bench 和所选 Agent 快照，首次执行可能需要几分钟…';
+  try{const result=await api('/terminal-bench/setup',{method:'POST',body:JSON.stringify({model_profile:model,reasoning_effort:effort})});toast(`已准备 ${result.model}：${result.task_count} 题`);await refreshAll();await loadHarborStatus();}
   catch(error){toast('Harbor 准备失败：'+error.message,true);await loadHarborStatus();}
   finally{button.disabled=false;}
 }
@@ -346,10 +369,11 @@ $('harborForm').onsubmit=async event=>{
   event.preventDefault();const form=new FormData(event.target),button=$('harborSubmit'),all=form.get('all_tasks')==='on';
   const names=String(form.get('task_names')||'').split(',').map(value=>value.trim()).filter(Boolean);
   if(!all&&!names.length){toast('请至少填写一个 Terminal-Bench 任务名。',true);return;}
-  button.disabled=true;$('harborPrepare').disabled=true;$('harborStatus').textContent='正在准备环境并启动真实 DeepSeek Harness 评测…';
+  const model=form.get('model_profile'),effort=$('harborReasoning').disabled?null:form.get('reasoning_effort');
+  button.disabled=true;$('harborPrepare').disabled=true;$('harborStatus').textContent='正在准备环境并启动所选模型评测…';
   try{
-    const result=await api('/terminal-bench/evaluations',{method:'POST',body:JSON.stringify({task_names:names,repetitions:+form.get('repetitions'),max_concurrency:+form.get('max_concurrency'),all_tasks:all,confirm_full_run:all})});
-    closeDialog('harborDialog');toast('DeepSeek Harness 评测已启动');await refreshAll();await jobDetail(result.job.id);
+    const result=await api('/terminal-bench/evaluations',{method:'POST',body:JSON.stringify({model_profile:model,reasoning_effort:effort,task_names:names,repetitions:+form.get('repetitions'),max_concurrency:+form.get('max_concurrency'),all_tasks:all,confirm_full_run:all})});
+    closeDialog('harborDialog');toast(`${result.registration.model} 评测已启动`);await refreshAll();await jobDetail(result.job.id);
   }catch(error){toast('评测启动失败：'+error.message,true);await loadHarborStatus();}
   finally{button.disabled=false;$('harborPrepare').disabled=false;}
 };

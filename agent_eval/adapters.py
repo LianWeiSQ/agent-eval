@@ -635,9 +635,28 @@ class TerminalBenchHarborAdapter(AgentAdapter):
         dataset = Path(str(config.get("dataset_root") or ""))
         result = {"ok": False, "adapter_type": self.adapter_type,
                   "python_available": python.is_file(), "dataset_available": dataset.is_dir(),
-                  "docker_available": False}
+                  "docker_available": False, "harness": str(config.get("harness") or "dsh"),
+                  "model": config.get("model")}
         if not result["python_available"] or not result["dataset_available"]:
             return {**result, "message": "Terminal-Bench 的 Python 环境或任务目录不可用，请检查 Agent 配置。"}
+        if result["harness"] == "codex":
+            key_env = str(config.get("api_key_env") or "OPENAI_API_KEY")
+            auth_path = os.environ.get("CODEX_AUTH_JSON_PATH")
+            auth_available = bool(auth_path and Path(auth_path).is_file())
+            auth_mode = str(config.get("auth_mode") or "api-key")
+            result["auth_mode"] = auth_mode
+            if auth_mode == "codex-auth-json":
+                result["credential_available"] = auth_available
+                result["credential_source"] = "codex-auth-json" if auth_available else None
+            elif auth_mode == "api-key":
+                result["credential_available"] = bool(os.environ.get(key_env))
+                result["credential_source"] = "api-key" if result["credential_available"] else None
+            else:
+                return {**result, "message": f"不支持的 Codex 认证模式：{auth_mode}。"}
+            result["key_environment"] = key_env
+            if not result["credential_available"]:
+                expected = "CODEX_AUTH_JSON_PATH" if auth_mode == "codex-auth-json" else key_env
+                return {**result, "message": f"模型凭据尚未设置；当前快照需要配置 {expected}。"}
         try:
             probe = subprocess.run(["docker", "info", "--format", "{{.OSType}}"],
                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
@@ -652,12 +671,23 @@ class TerminalBenchHarborAdapter(AgentAdapter):
             return {**result, "message": "Docker 引擎尚不可用，请启动 Docker Desktop，等待引擎就绪后重新检查。"}
         if probe.stdout.strip() != "linux":
             return {**result, "message": "Terminal-Bench 需要 Linux 容器，请将 Docker Desktop 切换到 Linux 容器模式。"}
-        return {**result, "ok": True, "docker_available": True,
-                "message": "Docker Linux 引擎可连接，任务目录与 Python 环境可用。",
+        try:
+            compose = subprocess.run(["docker", "compose", "version", "--short"], capture_output=True,
+                                     text=True, encoding="utf-8", errors="replace", timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            return {**result, "docker_available": True, "compose_available": False,
+                    "message": "Docker Compose v2 插件不可用或检查超时，Harbor 无法启动任务容器。"}
+        if compose.returncode:
+            return {**result, "docker_available": True, "compose_available": False,
+                    "message": "Docker Compose v2 插件不可用，Harbor 无法启动任务容器。"}
+        return {**result, "ok": True, "docker_available": True, "compose_available": True,
+                "compose_version": compose.stdout.strip(),
+                "message": "Docker Linux 引擎与 Compose v2 可连接，任务目录与 Python 环境可用。",
                 "note": "此检查不调用模型；模型凭据和具体任务镜像仍由运行阶段验证。"}
 
     def run(self, *, snapshot: dict[str, Any], task: dict[str, Any], fixture: dict[str, Any], cancel_event: threading.Event) -> dict[str, Any]:
-        from .terminal_bench import INTEGRATION_FILES, normalise_result, task_digest
+        from .docker_cleanup import cleanup_trial_environment, inspect_image
+        from .terminal_bench import INTEGRATION_FILES, normalise_result, task_digest, validate_harbor_result_identity
         config = snapshot.get("config") or {}
         source = task.get("terminal_bench") or {}
         dataset = Path(config["dataset_root"]).resolve()
@@ -674,21 +704,28 @@ class TerminalBenchHarborAdapter(AgentAdapter):
         cancel_path = output / "cancel"
         request = {"task_dir": str(task_dir), "trial_name": trial_name, "trials_dir": str(output),
                    "result_path": str(result_path), "cancel_path": str(cancel_path),
-                   "environment_build_timeout_multiplier": float(config.get("environment_build_timeout_multiplier", 3.0)),
-                   'verifier_preflight': (config.get('verifier_preflight_tasks') or {}).get(source['task_name'])}
+                   "harness": str(config.get("harness") or "dsh"),
+                   "model": config.get("model"), "provider": config.get("provider"),
+                   "api_key_env": config.get("api_key_env"), "base_url": config.get("base_url"),
+                   "auth_mode": config.get("auth_mode", "api-key"),
+                   "wire_api": config.get("wire_api"), "reasoning_effort": config.get("reasoning_effort"),
+                    "disable_response_storage": config.get("disable_response_storage", True),
+                    "codex_version": config.get("codex_version"),
+                    "environment_build_timeout_multiplier": float(config.get("environment_build_timeout_multiplier", 3.0))}
         if task.get("correction"):
             request["extra_instructions"] = ["Human-approved feedback from the previous attempt:\n" + str(task["correction"]["feedback"])]
         request_path = output / "request.json"
         request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
         root = Path(__file__).resolve().parents[1]
-        import hashlib
-        runtime_archive = root / ".terminal-bench/runtime-cache/dsh-runtime.tgz"
-        if not runtime_archive.is_file():
-            raise AdapterFailure("runtime_missing", "Prepare the pinned DSH runtime archive first", stage="environment_preparing")
-        with runtime_archive.open("rb") as stream:
-            runtime_hash = hashlib.file_digest(stream, "sha256").hexdigest()
-        if runtime_hash != config.get("runtime_archive_sha256"):
-            raise AdapterFailure("runtime_changed", "DSH runtime archive does not match the immutable snapshot", stage="environment_preparing")
+        if request["harness"] == "dsh":
+            import hashlib
+            runtime_archive = root / ".terminal-bench/runtime-cache/dsh-runtime.tgz"
+            if not runtime_archive.is_file():
+                raise AdapterFailure("runtime_missing", "Prepare the pinned DSH runtime archive first", stage="environment_preparing")
+            with runtime_archive.open("rb") as stream:
+                runtime_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+            if runtime_hash != config.get("runtime_archive_sha256"):
+                raise AdapterFailure("runtime_changed", "DSH runtime archive does not match the immutable snapshot", stage="environment_preparing")
         source_dir = output / "runtime-source"
         source_dir.mkdir()
         files = config.get('integration_files') or ('agent_eval/harbor_dsh.py','agent_eval/terminal_bench.py',
@@ -703,26 +740,51 @@ class TerminalBenchHarborAdapter(AgentAdapter):
         child_env = dict(os.environ)
         child_env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "DO_NOT_TRACK": "1"})
         timeout = min(float(config.get("runner_timeout_seconds", 3300)), float(task.get('timeout_seconds') or 3300))
-        with (output / "runner.log").open("w", encoding="utf-8") as log:
-            process = subprocess.Popen([config["python"], str(root / "scripts/run_harbor_trial.py"), str(request_path)],
-                                       cwd=root, env=child_env, stdout=log, stderr=subprocess.STDOUT)
-            canceled_at = None
-            while process.poll() is None:
-                if cancel_event.wait(0.5) or time.perf_counter() - started > timeout:
-                    if canceled_at is None:
-                        cancel_path.write_text("cancel", encoding="utf-8")
-                        canceled_at = time.perf_counter()
-                    elif time.perf_counter() - canceled_at > 120:
-                        process.terminate()
-                        process.wait(timeout=15)
-                        break
-                    time.sleep(0.5)
+        timed_out = False
+        cleanup = None
+        try:
+            with (output / "runner.log").open("w", encoding="utf-8") as log:
+                process = subprocess.Popen([config["python"], str(root / "scripts/run_harbor_trial.py"), str(request_path)],
+                                           cwd=root, env=child_env, stdout=log, stderr=subprocess.STDOUT)
+                canceled_at = None
+                while process.poll() is None:
+                    expired = time.perf_counter() - started > timeout
+                    if cancel_event.wait(0.5) or expired:
+                        timed_out = timed_out or expired
+                        if canceled_at is None:
+                            cancel_path.write_text("cancel", encoding="utf-8")
+                            canceled_at = time.perf_counter()
+                        elif time.perf_counter() - canceled_at > 120:
+                            process.terminate()
+                            try:
+                                process.wait(timeout=15)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait(timeout=15)
+                            break
+                        time.sleep(0.5)
+        finally:
+            cleanup = cleanup_trial_environment(trial_name)
+        if not cleanup.get("verified"):
+            raise AdapterFailure("environment_cleanup_failed",
+                                 f"Harbor trial resources were not fully removed: {cleanup}",
+                                 stage="environment_cleanup")
         if cancel_event.is_set():
             raise AdapterFailure("canceled", f"Harbor trial canceled; logs: {output}")
+        if timed_out:
+            raise AdapterFailure("runner_timeout", f"Harbor trial exceeded its outer safety timeout; logs: {output}",
+                                 stage="runner")
         if not result_path.is_file():
-            raise AdapterFailure("harbor_runner_failed", f"Harbor did not produce a completed result; inspect {output / 'runner.log'}", stage="environment_preparing")
+            raise AdapterFailure("harbor_runner_failed", f"Harbor did not produce a completed result; inspect {output / 'runner.log'}", stage="runner")
         result = json.loads(result_path.read_text(encoding="utf-8"))
-        run = normalise_result(result, trial_dir=output / trial_name, task_id=task["id"], digest=digest)
+        try:
+            validate_harbor_result_identity(result, task_dir=task_dir, trial_name=trial_name)
+        except ValueError as error:
+            raise AdapterFailure("harbor_result_mismatch", str(error), stage="collecting") from error
+        run = normalise_result(result, trial_dir=output / trial_name, task_id=task["id"], digest=digest,
+                               harness=request["harness"], model=str(config.get("model") or ""))
+        run["environment_cleanup"] = cleanup
+        run["environment_image"] = inspect_image((task.get("environment") or {}).get("docker_image"))
         run["usage"]["duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
         return run
 
