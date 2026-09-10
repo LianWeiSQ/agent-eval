@@ -674,6 +674,7 @@ class TerminalBenchHarborAdapter(AgentAdapter):
         cancel_path = output / "cancel"
         request = {"task_dir": str(task_dir), "trial_name": trial_name, "trials_dir": str(output),
                    "result_path": str(result_path), "cancel_path": str(cancel_path),
+                   "environment_build_timeout_multiplier": float(config.get("environment_build_timeout_multiplier", 3.0)),
                    'verifier_preflight': (config.get('verifier_preflight_tasks') or {}).get(source['task_name'])}
         if task.get("correction"):
             request["extra_instructions"] = ["Human-approved feedback from the previous attempt:\n" + str(task["correction"]["feedback"])]

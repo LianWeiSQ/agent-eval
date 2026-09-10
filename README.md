@@ -12,13 +12,13 @@
 python -m venv .venv
 # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 # Linux/macOS: source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -e ".[terminal-bench]"
 python -m agent_eval serve --host 127.0.0.1 --port 8765 --data-dir .data
 ```
 
-打开 <http://127.0.0.1:8765/>。基础 Portal、API、SQLite 使用 Python 标准库；首次仅初始化 MMLU 和 DSH / Supervisor 配置，不会自动调用付费模型。Windows 也可在已激活的终端执行 `./scripts/evaluation-service.ps1`。
+打开 <http://127.0.0.1:8765/>。基础 Portal、API、SQLite 使用 Python 标准库；首次仅初始化 MMLU 和 DSH / Supervisor 配置，不会自动调用付费模型。点击“DSH / Harbor 评测”可以由后台自动准备并注册 Terminal-Bench、Harbor 和固定 DSH 运行包，再直接启动指定任务。Windows 也可在已激活的终端执行 `./scripts/evaluation-service.ps1`。
 
-详细操作见 [使用说明](docs/USAGE.md)。真实 Terminal-Bench 还需要 Docker Linux 容器、Harbor、固定版本 DSH 运行包和模型凭据，按 [Terminal-Bench 接入](docs/TERMINAL_BENCH.md) 初始化。
+详细操作见 [使用说明](docs/USAGE.md)。真实 Terminal-Bench 需要 Docker Linux 容器、`harbor==0.22.0` 和 DeepSeek 模型凭据；任务集与固定 DSH 运行包可由后台自动准备，细节见 [Terminal-Bench 接入](docs/TERMINAL_BENCH.md)。
 
 ## 工作流程
 

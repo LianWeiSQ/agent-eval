@@ -54,6 +54,20 @@ def _parser() -> argparse.ArgumentParser:
     snapshot_list = subparsers.add_parser("snapshot-list", help="List AgentSnapshots.")
     snapshot_list.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
 
+    terminal_status = subparsers.add_parser("terminal-bench-status", help="Check Harbor and DeepSeek Harness readiness.")
+    terminal_status.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+
+    terminal_setup = subparsers.add_parser("terminal-bench-setup", help="Prepare and register Terminal-Bench, Harbor and DeepSeek Harness.")
+    terminal_setup.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+
+    terminal_run = subparsers.add_parser("terminal-bench-run", help="Prepare and start a DeepSeek Harness evaluation through Harbor.")
+    terminal_run.add_argument("--task", action="append", help="Terminal-Bench task name; repeat for multiple tasks.")
+    terminal_run.add_argument("--all-tasks", action="store_true", help="Run all 89 tasks.")
+    terminal_run.add_argument("--confirm-full-run", action="store_true", help="Required together with --all-tasks.")
+    terminal_run.add_argument("--repetitions", type=int, default=1)
+    terminal_run.add_argument("--max-concurrency", type=int, default=1)
+    terminal_run.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+
     job_run = subparsers.add_parser("job-run", help="Create, start and optionally wait for an EvalJob.")
     job_run.add_argument("--name", default="CLI evaluation")
     job_run.add_argument("--benchmark-id", required=True)
@@ -131,6 +145,34 @@ def _platform_command(args: argparse.Namespace) -> int:
         for item in service.list_snapshots(actor):
             print(f"{item['id']}\t{item['name']}@{item['version']}\t{item['adapter_type']}")
         return 0
+    if args.command == "terminal-bench-status":
+        print(json.dumps(service.terminal_bench_status(actor), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "terminal-bench-setup":
+        print(json.dumps(service.prepare_terminal_bench(actor), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "terminal-bench-run":
+        result = service.start_terminal_bench_evaluation(
+            actor,
+            {
+                "task_names": args.task,
+                "all_tasks": args.all_tasks,
+                "confirm_full_run": args.confirm_full_run,
+                "repetitions": args.repetitions,
+                "max_concurrency": args.max_concurrency,
+            },
+        )
+        job_id = result["job"]["id"]
+        print(f"Job: {job_id}")
+        while True:
+            current = service.get_job(actor, job_id)
+            print(f"\r{current['status']}: {current['progress_completed']}/{current['progress_total']}", end="", flush=True)
+            if current["status"] in {"completed", "review_pending", "failed", "canceled"}:
+                print()
+                if current.get("report"):
+                    print(f"Conclusion: {current['report']['conclusion']}")
+                return 1 if current["status"] == "failed" else 0
+            time.sleep(0.5)
     if args.command == "job-run":
         job = service.create_job(
             actor,

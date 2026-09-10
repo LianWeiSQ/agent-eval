@@ -280,6 +280,109 @@ class EvaluationService:
             "usage": run.get("usage") or {},
         }
 
+    # Terminal-Bench / Harbor provisioning and direct DeepSeek Harness runs
+    def terminal_bench_status(self, actor: Actor) -> dict[str, Any]:
+        from .harbor_setup import terminal_bench_status
+
+        return terminal_bench_status(self.project_root, self.list_benchmarks(actor), self.list_snapshots(actor))
+
+    def prepare_terminal_bench(self, actor: Actor) -> dict[str, Any]:
+        require_role(actor.role, ADMIN_ROLES | {"project_operator"})
+        from .harbor_setup import HarborSetupError, prepare_terminal_bench
+
+        try:
+            registration = prepare_terminal_bench(self, actor)
+        except (HarborSetupError, RuntimeError, OSError) as exc:
+            raise EvalError("terminal_bench_setup_failed", str(exc), status=409) from exc
+        self._audit(
+            actor,
+            "terminal_bench.setup",
+            "benchmark",
+            registration["benchmark_id"],
+            {"agent_snapshot_id": registration["agent_snapshot_id"], "task_count": registration["task_count"]},
+        )
+        return registration
+
+    def start_terminal_bench_evaluation(self, actor: Actor, payload: dict[str, Any]) -> dict[str, Any]:
+        require_role(actor.role, ADMIN_ROLES | {"project_operator"})
+        registration = self.prepare_terminal_bench(actor)
+        status = self.terminal_bench_status(actor)
+        components = status["components"]
+        if not components["deepseek_credential"]["available"]:
+            raise EvalError(
+                "deepseek_credential_missing",
+                "未找到 DEEPSEEK_API_KEY；请设置环境变量，或先用 DeepSeek Harness 登录并写入凭据。",
+                status=409,
+            )
+        if not status["ready"]:
+            raise EvalError(
+                "terminal_bench_not_ready",
+                "Harbor / Docker / Terminal-Bench 运行环境尚未就绪，请查看状态接口中的 components。",
+                status=409,
+            )
+        benchmark = self._get("benchmarks", registration["benchmark_id"], actor)
+        available = {task["id"] for task in benchmark["package"]["tasks"]}
+        if payload.get("all_tasks"):
+            if payload.get("confirm_full_run") is not True:
+                raise EvalError(
+                    "full_run_confirmation_required",
+                    "全量运行会启动 89 个真实模型任务；请显式设置 confirm_full_run=true",
+                    status=409,
+                )
+            selected_task_ids = sorted(available)
+        else:
+            raw_names = payload.get("task_names")
+            if raw_names is None:
+                from .harbor_setup import DEFAULT_TASK
+
+                raw_names = [DEFAULT_TASK]
+            if not isinstance(raw_names, list) or not raw_names or not all(isinstance(item, str) and item.strip() for item in raw_names):
+                raise EvalError("invalid_task_filter", "task_names 必须是非空字符串数组")
+            selected_task_ids = list(dict.fromkeys(
+                name.strip() if name.strip().startswith("TB21-") else "TB21-" + name.strip()
+                for name in raw_names
+            ))
+            missing = sorted(set(selected_task_ids) - available)
+            if missing:
+                raise EvalError("unknown_task", f"未知 Terminal-Bench Task：{', '.join(missing)}")
+            if len(available) == 89 and set(selected_task_ids) == available and payload.get("confirm_full_run") is not True:
+                raise EvalError(
+                    "full_run_confirmation_required",
+                    "全量运行会启动 89 个真实模型任务；请显式设置 confirm_full_run=true",
+                    status=409,
+                )
+        try:
+            repetitions = max(1, min(10, int(payload.get("repetitions", 1))))
+            max_concurrency = max(1, min(20, int(payload.get("max_concurrency", 1))))
+            infra_retry_limit = max(0, min(3, int(payload.get("infra_retry_limit", 0))))
+            min_pass_rate = float(payload.get("min_pass_rate", 1.0))
+        except (TypeError, ValueError) as exc:
+            raise EvalError("invalid_evaluation_options", "repetitions、max_concurrency、infra_retry_limit 或 min_pass_rate 格式无效") from exc
+        if not 0 <= min_pass_rate <= 1:
+            raise EvalError("invalid_evaluation_options", "min_pass_rate 必须在 0 到 1 之间")
+        selected_timeout = max(
+            120,
+            *(int(task.get("timeout_seconds") or 120) for task in benchmark["package"]["tasks"] if task["id"] in selected_task_ids),
+        )
+        job = self.create_job(
+            actor,
+            {
+                "name": str(payload.get("name") or "DeepSeek Harness · Terminal-Bench 评估"),
+                "benchmark_id": benchmark["id"],
+                "agent_snapshot_ids": [registration["agent_snapshot_id"]],
+                "task_filter": {"task_ids": selected_task_ids},
+                "execution": {
+                    "repetitions": repetitions,
+                    "max_concurrency": max_concurrency,
+                    "timeout_seconds": selected_timeout,
+                    "infra_retry_limit": infra_retry_limit,
+                },
+                "gate": {"min_pass_rate": min_pass_rate, "max_hard_failures": 0},
+            },
+        )
+        started = self.start_job(actor, job["id"])
+        return {"job": started, "registration": registration, "selected_task_ids": selected_task_ids}
+
     # Jobs and trials
     def estimate_job(self, actor: Actor, payload: dict[str, Any]) -> dict[str, Any]:
         benchmark = self._get("benchmarks", str(payload.get("benchmark_id")), actor)

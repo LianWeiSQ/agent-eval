@@ -86,6 +86,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/api/v1/bootstrap":
             return service.ensure_demo_data(actor), 200
 
+        if method == "GET" and path == "/api/v1/terminal-bench/status":
+            return service.terminal_bench_status(actor), 200
+        if method == "POST" and path == "/api/v1/terminal-bench/setup":
+            return service.prepare_terminal_bench(actor), 200
+        if method == "POST" and path == "/api/v1/terminal-bench/evaluations":
+            return service.start_terminal_bench_evaluation(actor, body), 202
+
         if path == "/api/v1/benchmarks":
             if method == "GET":
                 return service.list_benchmarks(actor, status=_first(query, "status")), 200

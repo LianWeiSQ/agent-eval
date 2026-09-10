@@ -113,9 +113,17 @@ def build_package(tasks_root: Path, names: list[str]) -> dict:
     return package
 
 
-def snapshot_config(tasks_root: Path, data_dir: Path, package: dict) -> dict:
+def snapshot_config(
+    tasks_root: Path,
+    data_dir: Path,
+    package: dict,
+    *,
+    python_executable: Path | None = None,
+) -> dict:
     runtime = ROOT / ".terminal-bench/runtime-cache/dsh-runtime.tgz"
-    python = ROOT / (".terminal-bench-venv/Scripts/python.exe" if sys.platform == "win32" else ".terminal-bench-venv/bin/python")
+    python = python_executable or ROOT / (
+        ".terminal-bench-venv/Scripts/python.exe" if sys.platform == "win32" else ".terminal-bench-venv/bin/python"
+    )
     if not runtime.is_file() or not python.is_file():
         raise RuntimeError("Pinned Harbor Python or DSH runtime is missing")
     with runtime.open("rb") as stream:
@@ -124,6 +132,7 @@ def snapshot_config(tasks_root: Path, data_dir: Path, package: dict) -> dict:
         "benchmark_id": package["manifest"]["id"],
         "output_root": str(data_dir.resolve() / "terminal-bench"),
         "runner_timeout_seconds": max(task["timeout_seconds"] for task in package["tasks"]),
+        "environment_build_timeout_multiplier": 3.0,
         "harbor_version": "0.22.0", "dsh_version": "0.1.1-rc.2",
         "model": "deepseek-official/deepseek-v4-flash", "permission_boundary": "disposable-task-container",
         "dataset_commit": COMMIT, "runtime_archive_sha256": runtime_hash,

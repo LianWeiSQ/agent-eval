@@ -7,6 +7,7 @@ import time
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 from agent_eval.api import ApiHandler, EvaluationHTTPServer
 from agent_eval.service import Actor, EvaluationService
@@ -74,6 +75,7 @@ class EvaluationApiTest(unittest.TestCase):
         self.assertEqual(dashboard["counts"]["snapshots"], 2)
         self.assertIn("Agent Eval 评测", portal)
         self.assertIn("执行轨迹", portal)
+        self.assertIn("DSH / Harbor 评测", portal)
         snapshots = self.service.list_snapshots(Actor())
         supervisor = next(item for item in snapshots if item["adapter_type"] == "llm-supervisor")
         self.assertEqual(supervisor["version"], "1.3.2")
@@ -82,6 +84,25 @@ class EvaluationApiTest(unittest.TestCase):
         self.assertEqual(dsh["version"], "1.2.0")
         self.assertEqual(dsh["config"]["command"][1:], ["--profile", "headless", "--patch", "{patch_file}", "{instruction}"])
         self.assertEqual(dsh["config"]["patch_file"], "examples/dsh-eval-session.patch.yml")
+
+    def test_terminal_bench_backend_routes_expose_status_setup_and_direct_start(self) -> None:
+        with patch.object(self.service, "terminal_bench_status", return_value={"ready": True}) as status:
+            with urllib.request.urlopen(self.base_url + "/api/v1/terminal-bench/status") as response:
+                self.assertTrue(json.loads(response.read())["data"]["ready"])
+            status.assert_called_once()
+        registration = {"benchmark_id": "bench-1", "agent_snapshot_id": "asnap-1"}
+        with patch.object(self.service, "prepare_terminal_bench", return_value=registration) as prepare:
+            request = urllib.request.Request(self.base_url + "/api/v1/terminal-bench/setup", data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(request) as response:
+                self.assertEqual(json.loads(response.read())["data"], registration)
+            prepare.assert_called_once()
+        started = {"job": {"id": "job-1", "status": "queued"}, "selected_task_ids": ["TB21-example"]}
+        with patch.object(self.service, "start_terminal_bench_evaluation", return_value=started) as start:
+            payload = json.dumps({"task_names": ["example"]}).encode()
+            request = urllib.request.Request(self.base_url + "/api/v1/terminal-bench/evaluations", data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(request) as response:
+                self.assertEqual(json.loads(response.read())["data"], started)
+            start.assert_called_once_with(Actor(), {"task_names": ["example"]})
 
     def test_agent_try_api_returns_observable_result(self) -> None:
         snapshot = self.service.create_snapshot(Actor(), {"name": "Echo Playground", "version": "1.0.0", "adapter_type": "echo", "config": {}})

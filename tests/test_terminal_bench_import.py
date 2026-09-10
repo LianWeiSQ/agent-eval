@@ -29,7 +29,27 @@ class TerminalBenchImportTest(unittest.TestCase):
             self.assertIn('agent_eval/dsh_process_guard.js', config['integration_files'])
             self.assertIn('agent_eval/dsh_trajectory.py', config['integration_files'])
             self.assertEqual(config['runner_timeout_seconds'], 9000)
+            self.assertEqual(config['environment_build_timeout_multiplier'], 3.0)
             self.assertEqual(config['verifier_preflight_tasks']['largest-eigenval'], 'pip')
+
+    def test_snapshot_config_accepts_backend_python_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / '.terminal-bench/runtime-cache/dsh-runtime.tgz'
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b'pinned-runtime')
+            python = root / 'backend-python.exe'
+            python.write_bytes(b'placeholder')
+            for name in importer.INTEGRATION_FILES:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('# frozen '+name, encoding='utf-8')
+            with patch.object(importer, 'ROOT', root):
+                config = importer.snapshot_config(
+                    root/'tasks', root/'.data', {'manifest':{'id':'full'}, 'tasks':[{'timeout_seconds':9000}]},
+                    python_executable=python,
+                )
+            self.assertEqual(config['python'], str(python))
 
     def test_snapshot_uses_commit_and_preserves_existing_content(self):
         with tempfile.TemporaryDirectory() as directory:

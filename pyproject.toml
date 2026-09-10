@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-terminal-bench = ["harbor==0.22.0"]
+terminal-bench = ["harbor==0.22.0", "PyYAML>=6,<7"]
 
 [project.scripts]
 agent-eval = "agent_eval.cli:main"

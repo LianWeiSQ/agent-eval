@@ -322,6 +322,37 @@ $('correctionForm').onsubmit=async event=>{
 async function jobAction(id,action) {try{await api(`/jobs/${id}/${action}`,{method:'POST',body:'{}'});toast(action==='cancel'?'已请求取消运行':'任务已启动');await refreshAll();}catch(error){toast(error.message,true);}}
 async function benchmarkAction(id,action) {try{await api(`/benchmarks/${id}/${action}`,{method:'POST',body:'{}'});toast('Benchmark 状态已更新');await refreshAll();}catch(error){toast(error.message,true);}}
 async function health(id) {try{const result=await api(`/agent-snapshots/${id}/health`);jsonDetail('Agent 连接检查',encodeURIComponent(JSON.stringify(result)));}catch(error){toast(error.message,true);}}
+function harborStatusText(value) {
+  const components=value?.components||{}, lines=[value?.ready?'环境已就绪，可直接启动评测。':'环境尚未完全就绪，首次启动会自动准备。'];
+  for(const [label,key] of [['Harbor','harbor'],['Docker Linux','docker'],['Terminal-Bench','terminal_bench_source'],['DSH 运行包','dsh_runtime'],['DeepSeek 凭据','deepseek_credential'],['评测注册','registration']]) {
+    const item=components[key]||{},ready=key==='docker'?item.linux:item.available;
+    lines.push(`${ready?'✓':'○'} ${label}${item.version?' '+item.version:''}${item.message?'：'+item.message:''}`);
+  }
+  return lines.join('\n');
+}
+async function loadHarborStatus() {
+  $('harborStatus').textContent='正在检查 Harbor 环境…';
+  try {const value=await api('/terminal-bench/status');state.harborStatus=value;$('harborStatus').textContent=harborStatusText(value);}
+  catch(error){$('harborStatus').textContent='环境检查失败：'+error.message;}
+}
+function openHarborDialog(){openDialog('harborDialog');loadHarborStatus();}
+async function prepareHarbor(){
+  const button=$('harborPrepare');button.disabled=true;$('harborStatus').textContent='正在下载并准备 Terminal-Bench、Harbor 和 DSH 运行包，首次执行可能需要几分钟…';
+  try{const result=await api('/terminal-bench/setup',{method:'POST',body:'{}'});toast(`Harbor 环境已准备：${result.task_count} 题`);await refreshAll();await loadHarborStatus();}
+  catch(error){toast('Harbor 准备失败：'+error.message,true);await loadHarborStatus();}
+  finally{button.disabled=false;}
+}
+$('harborForm').onsubmit=async event=>{
+  event.preventDefault();const form=new FormData(event.target),button=$('harborSubmit'),all=form.get('all_tasks')==='on';
+  const names=String(form.get('task_names')||'').split(',').map(value=>value.trim()).filter(Boolean);
+  if(!all&&!names.length){toast('请至少填写一个 Terminal-Bench 任务名。',true);return;}
+  button.disabled=true;$('harborPrepare').disabled=true;$('harborStatus').textContent='正在准备环境并启动真实 DeepSeek Harness 评测…';
+  try{
+    const result=await api('/terminal-bench/evaluations',{method:'POST',body:JSON.stringify({task_names:names,repetitions:+form.get('repetitions'),max_concurrency:+form.get('max_concurrency'),all_tasks:all,confirm_full_run:all})});
+    closeDialog('harborDialog');toast('DeepSeek Harness 评测已启动');await refreshAll();await jobDetail(result.job.id);
+  }catch(error){toast('评测启动失败：'+error.message,true);await loadHarborStatus();}
+  finally{button.disabled=false;$('harborPrepare').disabled=false;}
+};
 function openSettings(){openDialog('settingsDialog');}
 $('benchmarkForm').onsubmit=async event=>{
   event.preventDefault();const form=new FormData(event.target);

@@ -64,6 +64,21 @@ Terminal-Bench 以官方 verifier 为评分依据。MMLU 使用固定题目与�
 
 MMLU 默认包含高中计算机科学公开小集的 20 题定义；这不是完整 MMLU。重新生成公开定义的入口为 `scripts/import_mmlu_smoke.py`。Terminal-Bench 的 DSH 则运行在任务容器中，详见专门文档。
 
+## 直接运行 Harbor / DeepSeek Harness
+
+安装可选依赖并启动 Docker Linux 引擎后，可以在 Portal 点击“DSH / Harbor 评测”。后台会自动下载固定 Terminal-Bench 源码、构建 DSH 运行包、注册 Benchmark 和执行快照，再启动填写的任务。首次准备可能需要几分钟，但不会调用模型；点击“准备并启动”后才会产生真实 DeepSeek 请求。
+
+命令行也提供同一条后台链路：
+
+```bash
+python -m pip install -e '.[terminal-bench]'
+python -m agent_eval terminal-bench-status --data-dir .data
+python -m agent_eval terminal-bench-setup --data-dir .data
+python -m agent_eval terminal-bench-run --task openssl-selfsigned-cert --data-dir .data
+```
+
+全量 89 题必须显式添加 `--all-tasks --confirm-full-run`。模型凭据从 `DEEPSEEK_API_KEY` 或当前用户的 DSH 凭据库读取，响应中不会返回密钥。首次运行某题会拉取其 Docker 镜像；命令行会等待 Job 完成，Portal/API 会在后台运行并可持续查看进度。
+
 ## 命令行
 
 ```bash

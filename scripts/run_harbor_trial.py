@@ -19,7 +19,10 @@ def load_credential() -> None:
     credential_path = home / ".credentials.yaml"
     if credential_path.is_file():
         data = yaml.safe_load(credential_path.read_text(encoding="utf-8")) or {}
-        value = (data.get("refs") or {}).get("DEEPSEEK_API_KEY")
+        refs = data.get("refs") if isinstance(data, dict) else None
+        value = (refs.get("DEEPSEEK_API_KEY") if isinstance(refs, dict) else None) or (
+            data.get("DEEPSEEK_API_KEY") if isinstance(data, dict) else None
+        )
         if isinstance(value, str) and value:
             os.environ["DEEPSEEK_API_KEY"] = value
     if not os.environ.get("DEEPSEEK_API_KEY"):
@@ -37,6 +40,7 @@ async def main(request: dict) -> None:
         "task": {"path": request["task_dir"]},
         "trial_name": request["trial_name"],
         "trials_dir": request["trials_dir"],
+        "environment_build_timeout_multiplier": request.get("environment_build_timeout_multiplier", 3.0),
         "agent": {
             "import_path": "agent_eval.harbor_dsh:DshAgent",
             "model_name": "deepseek-official/deepseek-v4-flash",

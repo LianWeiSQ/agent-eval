@@ -32,6 +32,9 @@ X-Role: project_admin
 | GET | `/health` | 服务健康检查 |
 | GET | `/api/v1/dashboard` | 概览统计 |
 | POST | `/api/v1/bootstrap` | 幂等初始化 MMLU 和 DSH / Supervisor 配置 |
+| GET | `/api/v1/terminal-bench/status` | 检查 Harbor、Docker、DSH 运行包、模型凭据和注册状态 |
+| POST | `/api/v1/terminal-bench/setup` | 自动准备并注册固定 Terminal-Bench 与 DeepSeek Harness 快照，不调用模型 |
+| POST | `/api/v1/terminal-bench/evaluations` | 自动准备、创建并启动指定 DeepSeek Harness 评测任务 |
 | GET/POST | `/api/v1/benchmarks` | 列表/创建 Benchmark |
 | POST | `/api/v1/benchmarks/validate` | 校验本地 Benchmark 路径 |
 | POST | `/api/v1/benchmarks/import` | 导入目录包、JSON、JSONL 或 YAML |
@@ -90,6 +93,21 @@ X-Role: project_admin
 ```
 
 创建返回 `draft`；再调用 `POST /jobs/{id}/start`。Job 后台展开为 `AgentSnapshot × Task × repetition`，客户端轮询详情或概览即可。
+
+## 直接运行 DeepSeek Harness
+
+下面的请求会自动准备缺失的 Terminal-Bench 源码和 DSH 运行包，注册 Harbor 执行快照，并只启动指定的一题：
+
+```json
+POST /api/v1/terminal-bench/evaluations
+{
+  "task_names": ["openssl-selfsigned-cert"],
+  "repetitions": 1,
+  "max_concurrency": 1
+}
+```
+
+省略 `task_names` 时也只运行默认单题。运行全部 89 题必须同时传入 `"all_tasks": true` 和 `"confirm_full_run": true`，防止意外产生大量真实模型调用。
 
 `POST /jobs/estimate` 会同时返回 Benchmark 要求、每个 Snapshot 的能力声明和缺失项。默认 `strict` 会拒绝不兼容组合；只有合规负测才显式设置 `compatibility_mode=allow`。Benchmark 类型、能力声明和带作用域的报告结论见 [BENCHMARK_LAYERS.md](BENCHMARK_LAYERS.md)。
 

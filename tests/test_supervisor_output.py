@@ -122,6 +122,11 @@ class SupervisorOutputTest(unittest.TestCase):
         args = _parser().parse_args(["snapshot-create", "--name", "s", "--version", "1", "--adapter", "llm-supervisor"])
         self.assertEqual(args.adapter, "llm-supervisor")
 
+    def test_cli_accepts_direct_terminal_bench_run(self) -> None:
+        args = _parser().parse_args(["terminal-bench-run", "--task", "openssl-selfsigned-cert"])
+        self.assertEqual(args.task, ["openssl-selfsigned-cert"])
+        self.assertFalse(args.all_tasks)
+
     def test_failed_supervision_is_audited_retryable_and_does_not_create_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             service = EvaluationService(Path(directory))

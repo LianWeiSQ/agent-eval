@@ -38,7 +38,7 @@
   </aside>
   <main>
     <section id="jobs" class="view active">
-      <header class="top"><div><h1>评测任务</h1><p>运行任务，查看结果，再对失败样本进行监督与纠错。</p></div><div class="actions"><button class="secondary" onclick="refreshAll()">刷新</button><button onclick="openJobDialog()">新建评测</button></div></header>
+      <header class="top"><div><h1>评测任务</h1><p>运行任务，查看结果，再对失败样本进行监督与纠错。</p></div><div class="actions"><button class="secondary" onclick="refreshAll()">刷新</button><button class="secondary" onclick="openHarborDialog()">DSH / Harbor 评测</button><button onclick="openJobDialog()">新建评测</button></div></header>
       <div id="connectionError" class="notice" hidden></div><div id="metrics" class="grid"></div>
       <div class="panel"><div class="panel-head toolbar"><h2>全部任务 <span id="jobCount" class="inline-count"></span></h2><input id="jobSearch" type="search" aria-label="搜索评测任务" placeholder="搜索名称、Benchmark 或任务编号" oninput="renderJobs()"></div><div id="jobsTable" class="table-wrap"></div></div>
     </section>
@@ -78,6 +78,17 @@
     </div></details>
     <div class="wide"><div id="jobCompatibility" class="hint" role="status">请选择 Benchmark 和执行 Agent。</div><button type="button" class="small secondary" style="margin-top:8px" onclick="updateJobCompatibility()">重新检查环境</button></div>
   </div><div class="dialog-actions"><button type="button" class="secondary" onclick="closeDialog('jobDialog')">取消</button><button id="jobSubmit" type="submit" disabled>创建并启动</button></div></form>
+</dialog>
+
+<dialog id="harborDialog"><div class="dialog-head"><h2>DeepSeek Harness · Harbor 评测</h2><button class="close" aria-label="关闭 Harbor 评测" onclick="closeDialog('harborDialog')">×</button></div>
+  <form id="harborForm"><div class="dialog-body form">
+    <div id="harborStatus" class="notice wide">正在检查 Harbor 环境…</div>
+    <label class="wide">Terminal-Bench 任务名<input name="task_names" value="openssl-selfsigned-cert"><span class="hint">多个任务用逗号分隔；后台会自动准备固定任务集、DSH 运行包并注册快照。</span></label>
+    <label>重复次数<input name="repetitions" type="number" min="1" max="10" value="1"></label>
+    <label>并发数<input name="max_concurrency" type="number" min="1" max="20" value="1"></label>
+    <label class="check wide"><input name="all_tasks" type="checkbox">运行完整 89 题（会产生大量真实模型调用）</label>
+    <p class="notice wide">启动评测会使用本机环境或 DSH 凭据库中的 <code>DEEPSEEK_API_KEY</code>，并产生真实模型调用。</p>
+  </div><div class="dialog-actions"><button id="harborPrepare" type="button" class="secondary" onclick="prepareHarbor()">仅准备环境</button><button type="button" class="secondary" onclick="closeDialog('harborDialog')">取消</button><button id="harborSubmit" type="submit">准备并启动</button></div></form>
 </dialog>
 
 <dialog id="jobDetailDialog"><div class="dialog-head"><div><h2 id="jobDetailTitle">任务详情</h2><div id="jobDetailSubtitle" class="subtle"></div></div><button class="close" aria-label="关闭任务详情" onclick="closeDialog('jobDetailDialog')">×</button></div><div class="dialog-body"><div class="tabs" role="tablist"><button id="resultsTab" role="tab" aria-selected="true" onclick="switchJobTab('results')">逐题结果与纠错</button><button id="reportTab" role="tab" aria-selected="false" onclick="switchJobTab('report')">报告与对比</button></div><div id="jobResults" role="tabpanel"></div><div id="reportContent" role="tabpanel" hidden></div></div></dialog>

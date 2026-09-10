@@ -11,9 +11,19 @@
 | DSH | `0.1.1-rc.2` |
 | 容器内 Node | `22.19.0`，Linux x64 |
 | 执行模型配置 | `deepseek-official/deepseek-v4-flash` |
-| 新导入快照版本 | `1.2.3-dev.1` |
+| 后台快照版本 | `1.2.3-<配置摘要>`（配置变化时自动新建） |
 
-仓库保存接入代码和准备配方。上游完整任务、镜像、Node/DSH 运行包以及生成的本机注册信息均按需准备，不随代码提交。具体环境问题见 [已知问题](KNOWN_ISSUES.md)。
+仓库保存接入代码和准备配方。上游完整任务、镜像、Node/DSH 运行包以及生成的本机注册信息均按需准备，不随代码提交。后台 API 和 Portal 可以自动完成以下准备步骤；手工命令保留用于排障。具体环境问题见 [已知问题](KNOWN_ISSUES.md)。
+
+## 后台直接接入
+
+安装 `.[terminal-bench]`、启动 Docker Linux 引擎并配置 DeepSeek 凭据后，在 Portal 点击“DSH / Harbor 评测”，或执行：
+
+```powershell
+python -m agent_eval terminal-bench-run --task openssl-selfsigned-cert --data-dir .data
+```
+
+后台会幂等执行任务集固定、DSH 运行包准备、Benchmark/快照注册、Job 创建和启动。默认只运行一题；全量 89 题要求 `--all-tasks --confirm-full-run`。首次运行某题还需拉取对应任务镜像；集成给环境准备保留三倍上游时限，避免慢速首次下载被误判成 Agent 失败。
 
 ## 1. Python 和任务集
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -14,6 +15,7 @@ from agent_eval.adapters import AdapterFailure, TerminalBenchHarborAdapter
 from agent_eval.compatibility import analyse_compatibility
 from agent_eval.common import EvalError, content_hash
 from agent_eval.grading_pipeline import grade_trial
+from agent_eval.harbor_setup import _credential_source
 from agent_eval.service import Actor, EvaluationService
 from agent_eval.terminal_bench import INTEGRATION_FILES, normalise_result, official_reward, task_digest
 
@@ -32,6 +34,78 @@ def verifier_files(root, reward):
 
 
 class TerminalBenchTest(unittest.TestCase):
+    def test_current_and_legacy_dsh_credential_layouts_are_detected_without_exposing_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            credential = Path(directory) / ".credentials.yaml"
+            with patch.dict(os.environ, {"DSH_HOME": directory}, clear=False):
+                os.environ.pop("DEEPSEEK_API_KEY", None)
+                credential.write_text("DEEPSEEK_API_KEY: current-secret\n", encoding="utf-8")
+                self.assertEqual(_credential_source(), "dsh-home")
+                credential.write_text("refs:\n  DEEPSEEK_API_KEY: legacy-secret\n", encoding="utf-8")
+                self.assertEqual(_credential_source(), "dsh-home")
+
+    def test_backend_can_prepare_and_start_a_selected_dsh_evaluation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = EvaluationService(Path(directory), project_root=Path(__file__).resolve().parents[1])
+            actor = Actor()
+            try:
+                benchmark = service.create_benchmark(actor, {
+                    "manifest": {"id": "terminal-bench-2.1-full", "name": "Terminal-Bench", "version": "2.1.0", "benchmark_type": "general"},
+                    "tasks": [task()],
+                }, publish=True)
+                snapshot = service.create_snapshot(actor, {
+                    "name": "DeepSeek Harness · Harbor", "version": "1.0.0",
+                    "adapter_type": "terminal-bench-harbor",
+                    "config": {"python": sys.executable, "dataset_root": directory},
+                })
+                registration = {"benchmark_id": benchmark["id"], "agent_snapshot_id": snapshot["id"]}
+                ready = {"ready": True, "components": {"deepseek_credential": {"available": True}}}
+                with patch.object(service, "prepare_terminal_bench", return_value=registration) as prepare, patch.object(
+                    service, "terminal_bench_status", return_value=ready
+                ), patch.object(
+                    TerminalBenchHarborAdapter, "healthcheck", return_value={"ok": True}
+                ), patch.object(service, "_spawn_job") as spawn:
+                    result = service.start_terminal_bench_evaluation(actor, {
+                        "task_names": ["example"], "repetitions": 2, "max_concurrency": 1,
+                    })
+                prepare.assert_called_once_with(actor)
+                self.assertEqual(result["registration"], registration)
+                self.assertEqual(result["selected_task_ids"], ["TB21-example"])
+                self.assertEqual(result["job"]["status"], "queued")
+                self.assertEqual(result["job"]["config"]["task_filter"], {"task_ids": ["TB21-example"]})
+                self.assertEqual(result["job"]["config"]["execution"]["repetitions"], 2)
+                self.assertEqual(result["job"]["config"]["execution"]["timeout_seconds"], 120)
+                spawn.assert_called_once_with(result["job"]["id"])
+            finally:
+                service.close()
+
+    def test_direct_dsh_evaluation_rejects_unknown_or_implicit_full_task_sets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = EvaluationService(Path(directory), project_root=Path(__file__).resolve().parents[1])
+            actor = Actor()
+            try:
+                benchmark = service.create_benchmark(actor, {
+                    "manifest": {"id": "terminal-bench-2.1-full", "name": "Terminal-Bench", "version": "2.1.0", "benchmark_type": "general"},
+                    "tasks": [task()],
+                }, publish=True)
+                snapshot = service.create_snapshot(actor, {
+                    "name": "DeepSeek Harness · Harbor", "version": "1.0.0",
+                    "adapter_type": "terminal-bench-harbor", "config": {},
+                })
+                registration = {"benchmark_id": benchmark["id"], "agent_snapshot_id": snapshot["id"]}
+                ready = {"ready": True, "components": {"deepseek_credential": {"available": True}}}
+                with patch.object(service, "prepare_terminal_bench", return_value=registration), patch.object(
+                    service, "terminal_bench_status", return_value=ready
+                ):
+                    with self.assertRaises(EvalError) as caught:
+                        service.start_terminal_bench_evaluation(actor, {"task_names": ["missing"]})
+                    self.assertEqual(caught.exception.code, "unknown_task")
+                    with self.assertRaises(EvalError) as caught:
+                        service.start_terminal_bench_evaluation(actor, {"all_tasks": True, "confirm_full_run": False})
+                    self.assertEqual(caught.exception.code, "full_run_confirmation_required")
+            finally:
+                service.close()
+
     def test_health_requires_a_reachable_linux_engine(self):
         config = {"python": sys.executable, "dataset_root": str(Path(__file__).parent)}
         cases = [
