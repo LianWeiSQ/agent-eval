@@ -18,7 +18,13 @@ from .common import ADMIN_ROLES, EvalError, content_hash, new_id, percentile, re
 from .compatibility import analyse_compatibility, incompatibility_message, normalise_capabilities, snapshot_capabilities
 from .database import Database
 from .grading_pipeline import grade_trial
-from .supervision import fixture_supervise, supervision_events
+from .supervision import (
+    SUPERVISION_CONTRACT,
+    SUPERVISION_CONTRACT_VERSION,
+    fixture_supervise,
+    supervision_events,
+    validate_supervision_verdict,
+)
 
 
 @dataclass(frozen=True)
@@ -704,6 +710,7 @@ class EvaluationService:
             result["reference_answer"] = None
         else:
             result = fixture_supervise(task=task, trial=trial)
+        result = validate_supervision_verdict(result, trial)
         supervision_id = new_id("supervision")
         needs_review = result["verdict"] != "pass"
         now = utc_now()
@@ -726,7 +733,7 @@ class EvaluationService:
                 "confidence": result["confidence"],
                 "answer_leakage_risk": result["answer_leakage_risk"],
                 "reference_answer_json": result.get("reference_answer"),
-                "result_json": {key: result.get(key) for key in ("verdict", "error_types", "reason", "suggestion", "evidence_refs", "confidence", "answer_leakage_risk")},
+                "result_json": {key: result.get(key) for key in ("verdict", "error_types", "reason", "suggestion", "evidence_refs", "confidence", "answer_leakage_risk", "validation")},
                 "usage_json": (supervisor_run or {}).get("usage") or {},
                 "raw_output_json": {"content": (supervisor_run or {}).get("raw_output"), "response_metadata": (supervisor_run or {}).get("response_metadata")} if supervisor_run else None,
                 "created_at": now,
@@ -738,20 +745,73 @@ class EvaluationService:
         self._audit(actor, "supervision.run", "supervision", supervision_id, {"trial_id": trial_id, "verdict": result["verdict"]})
         return self._get("supervision_runs", supervision_id, actor)
 
+    def revalidate_supervision(self, actor: Actor, supervision_id: str) -> dict[str, Any]:
+        """Explicit audited repair of an unreviewed legacy verdict; no model call or grade edit."""
+        require_role(actor.role, ADMIN_ROLES)
+        saved = self._get("supervision_runs", supervision_id, actor)
+        if self.database.one("SELECT id FROM correction_decisions WHERE supervision_run_id=?", (supervision_id,)):
+            raise EvalError("invalid_state", "已有人工决定的监督记录不能重新分类", status=409)
+        trial = self._get("trials", saved["trial_id"], actor)
+        original = saved.get("result") or {
+            key: saved.get(key)
+            for key in ("verdict", "error_types", "reason", "suggestion", "evidence_refs", "confidence", "answer_leakage_risk")
+        }
+        checked = validate_supervision_verdict(original, trial)
+        if checked == original:
+            return saved
+        self.database.update(
+            "supervision_runs",
+            supervision_id,
+            {
+                "verdict": checked["verdict"],
+                "status": "pending_review",
+                "reason": checked["reason"],
+                "error_types_json": checked["error_types"],
+                "result_json": checked,
+            },
+        )
+        self.database.update(
+            "jobs",
+            trial["job_id"],
+            {"status": "review_pending", "finished_at": None, "updated_at": utc_now()},
+        )
+        self._audit(
+            actor,
+            "supervision.revalidated",
+            "supervision",
+            supervision_id,
+            {
+                "version": SUPERVISION_CONTRACT_VERSION,
+                "before_verdict": original["verdict"],
+                "after_verdict": checked["verdict"],
+                "raw_model_output_preserved": True,
+                "trial_outcome_unchanged": trial.get("outcome"),
+            },
+        )
+        return self._get("supervision_runs", supervision_id, actor)
+
     @staticmethod
     def _supervision_input(task: dict[str, Any], trial: dict[str, Any]) -> dict[str, Any]:
         run = trial.get("agent_run") or {}
         events, input_policy = supervision_events(run.get("events") or [])
+        terminal_bench = task.get("terminal_bench") or {}
+        constraints = {"tags": task.get("tags") or [], "timeout_seconds": task.get("timeout_seconds")}
+        if terminal_bench:
+            constraints = {
+                "tags": task.get("tags") or [],
+                "platform_trial_timeout_seconds": task.get("timeout_seconds"),
+                "official_agent_timeout_seconds": terminal_bench.get("agent_timeout_seconds"),
+                "official_verifier_timeout_seconds": terminal_bench.get("verifier_timeout_seconds"),
+                "timeout_note": "平台等待上限包含环境准备、执行和评分；官方解题与评分各自计时，不能把平台等待上限当作解题预算。",
+            }
         return {
+            "review_contract": dict(SUPERVISION_CONTRACT),
             "input_policy": input_policy,
             "task": {
                 "id": task.get("id"),
                 "title": task.get("title"),
                 "instruction": task.get("instruction"),
-                "constraints": {
-                    "tags": task.get("tags") or [],
-                    "timeout_seconds": task.get("timeout_seconds"),
-                },
+                "constraints": constraints,
             },
             "attempt": {
                 "id": trial.get("id"),
@@ -1215,7 +1275,7 @@ class EvaluationService:
             (
                 "llm-supervisor",
                 "LLM Supervisor Agent",
-                "1.3.2",
+                "1.3.3",
                 "独立监督 Agent；结构化建议由人工审核后才用于纠错重试",
                 {
                     "base_url": "https://api.example.com/v1",
@@ -1224,6 +1284,7 @@ class EvaluationService:
                     "api_key_env": "EVAL_SUPERVISOR_API_KEY",
                     "timeout_seconds": 360,
                     "thinking": "enabled",
+                    "review_contract_version": SUPERVISION_CONTRACT_VERSION,
                     "budget": {"max_output_tokens": 32768},
                 },
             ),
@@ -1636,7 +1697,12 @@ class EvaluationService:
         primary_by_id = {trial["id"]: trial for trial in primary_trials}
         supervised_primary = [item for item in supervisions if item["trial_id"] in primary_by_id]
         actual_failures = [item for item in supervised_primary if primary_by_id[item["trial_id"]].get("outcome") != "pass"]
-        false_positives = [item for item in supervised_primary if primary_by_id[item["trial_id"]].get("outcome") == "pass" and item.get("verdict") != "pass"]
+
+        def raw_verdict(item: dict[str, Any]) -> Any:
+            validation = (item.get("result") or {}).get("validation") or {}
+            return (validation.get("original_result") or {}).get("verdict", item.get("verdict"))
+
+        false_positives = [item for item in supervised_primary if primary_by_id[item["trial_id"]].get("outcome") == "pass" and raw_verdict(item) != "pass"]
         supervisor_usages = [item.get("usage") or {} for item in supervisions]
         correction_summary = {
             "corrected_tasks": len(corrected_chains),
@@ -1645,7 +1711,8 @@ class EvaluationService:
             "mean_score_delta": round(mean(deltas), 2) if deltas else None,
             "fix_rate": round(sum(chain[0].get("outcome") != "pass" and chain[-1].get("outcome") == "pass" for chain in corrected_chains) / len(corrected_chains), 4) if corrected_chains else None,
             "supervised_tasks": len(supervised_primary),
-            "supervisor_detection_rate": round(sum(item.get("verdict") != "pass" for item in actual_failures) / len(actual_failures), 4) if actual_failures else None,
+            "supervisor_detection_rate": round(sum(raw_verdict(item) != "pass" for item in actual_failures) / len(actual_failures), 4) if actual_failures else None,
+            "supervisor_verdict_conflicts": sum(bool((item.get("result") or {}).get("validation")) for item in supervised_primary),
             "supervisor_false_positive_rate": round(len(false_positives) / sum(primary_by_id[item["trial_id"]].get("outcome") == "pass" for item in supervised_primary), 4) if any(primary_by_id[item["trial_id"]].get("outcome") == "pass" for item in supervised_primary) else None,
             "human_decisions": {decision: sum(item.get("decision") == decision for item in decisions) for decision in ("approve_retry", "reject_feedback", "accept_final", "terminate")},
             "supervisor_latency_ms": {

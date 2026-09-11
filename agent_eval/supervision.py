@@ -3,6 +3,37 @@ from __future__ import annotations
 from typing import Any
 
 
+SUPERVISION_CONTRACT_VERSION = "task-completion-v2"
+SUPERVISION_CONTRACT = {
+    "version": SUPERVISION_CONTRACT_VERSION,
+    "target": "verdict 判断执行 Agent 是否完成任务，不是判断官方评分是否正确。",
+    "pass": "可观察证据支持任务全部必要要求已完成。",
+    "fail": "可观察证据支持任务要求未完成；失败任务被正确判为零分，仍应输出 fail。",
+    "uncertain": "证据不足、评分可信度存疑或无法消解的矛盾，需要人工复核。",
+    "grading_agreement": "是否同意官方评分写在 reason 中，不能用 pass 表示同意零分。",
+}
+
+
+def validate_supervision_verdict(result: dict[str, Any], trial: dict[str, Any]) -> dict[str, Any]:
+    """Route contradictory passes to review, preserving the model's original result."""
+    if result.get("verdict") != "pass" or trial.get("outcome") in {None, "pass"}:
+        return result
+    return {
+        **result,
+        "verdict": "uncertain",
+        "reason": "监督原始 pass 与 Trial 未通过的结果冲突，需人工复核；这不是任务已通过。原始理由："
+        + str(result.get("reason") or ""),
+        "error_types": list(dict.fromkeys([*(result.get("error_types") or []), "verdict_conflict"])),
+        "validation": {
+            "version": SUPERVISION_CONTRACT_VERSION,
+            "code": "verdict_conflict",
+            "trial_outcome": trial.get("outcome"),
+            "original_result": dict(result),
+            "note": "平台只把矛盾结果送人工审核，不把官方评分一致性解释为任务成功。",
+        },
+    }
+
+
 def supervision_events(source: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Project DSH transport logs onto completed messages and tool evidence."""
     streaming = {"assistant_chunk", "dsh_reasoning_chunks", "dsh_tool_call_chunks",

@@ -71,6 +71,7 @@ class EvaluationApiTest(unittest.TestCase):
         with urllib.request.urlopen(self.base_url + "/") as response:
             portal = response.read().decode("utf-8")
         self.assertEqual(health["status"], "ok")
+        self.assertEqual(health["supervision_contract_version"], "task-completion-v2")
         self.assertEqual(dashboard["counts"]["benchmarks"], 1)
         self.assertEqual(dashboard["counts"]["snapshots"], 2)
         self.assertIn("Agent Eval 评测", portal)
@@ -78,8 +79,9 @@ class EvaluationApiTest(unittest.TestCase):
         self.assertIn("Agent / Harbor 评测", portal)
         snapshots = self.service.list_snapshots(Actor())
         supervisor = next(item for item in snapshots if item["adapter_type"] == "llm-supervisor")
-        self.assertEqual(supervisor["version"], "1.3.2")
+        self.assertEqual(supervisor["version"], "1.3.3")
         self.assertEqual(supervisor["config"]["api_key_env"], "EVAL_SUPERVISOR_API_KEY")
+        self.assertEqual(supervisor["config"]["review_contract_version"], "task-completion-v2")
         dsh = next(item for item in snapshots if item["adapter_type"] == "dsh-headless")
         self.assertEqual(dsh["version"], "1.2.0")
         self.assertEqual(dsh["config"]["command"][1:], ["--profile", "headless", "--patch", "{patch_file}", "{instruction}"])

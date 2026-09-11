@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .common import EvalError, new_id
 from .service import Actor, EvaluationService
+from .supervision import SUPERVISION_CONTRACT_VERSION
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
@@ -64,7 +65,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         request_id = self.headers.get("X-Request-ID") or new_id("req")
         try:
             if path == "/health":
-                return self._json(200, {"status": "ok", "service": "evaluation-service", "schema_version": "1.0.0"}, request_id)
+                return self._json(200, {"status": "ok", "service": "evaluation-service", "schema_version": "1.0.0", "supervision_contract_version": SUPERVISION_CONTRACT_VERSION}, request_id)
             if not path.startswith("/api/"):
                 return self._static(path)
             actor = self._actor()

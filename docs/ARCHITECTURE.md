@@ -1,5 +1,7 @@
 # 架构与评测设计
 
+本文对应当前实现。建设目标与后续路线见 [Eval 设计](DESIGN.md)。
+
 ## 目标
 
 将执行 Agent 的任务表现、评测过程是否可信、监督与人工纠错的效果分开衡量。平台负责调度、版本和证据；Benchmark 定义任务与评分规则；执行 Agent 负责完成任务；监督 Agent 分析证据并提出建议。
@@ -13,7 +15,7 @@
 | 存储 | `database.py` | SQLite 元数据、项目范围、审计 |
 | Adapter | `adapters.py` | DSH、Harbor、HTTP Runtime、示例及模型接口 |
 | 轨迹 | `dsh_trajectory.py` | JSONL 会话归一化、工具事件与用量 |
-| 评分 | `grading_pipeline.py`、`graders.py` | 规则、Schema、可执行评分、LLM、官方结果 |
+| 评分 | `grading_pipeline.py` | 规则、Schema、可执行评分、LLM、官方结果 |
 | Terminal-Bench | `terminal_bench.py`、`harbor_dsh.py`、`run_harbor_trial.py` | 模型执行配置、轨迹归一化、官方评分采信、进程边界 |
 | 独立监督 | `supervision.py`、监督 Adapter | 结构化建议与人工批准后的纠错 |
 
@@ -34,13 +36,19 @@ Harbor 在每道题的隔离 Docker Linux 容器中运行所选 Agent。Codex �
 
 超时、取消或异常退出时，进程守卫根据本任务启动前的进程基线终止新进程，并确认无残留后交回控制。无法确认停止时阻止评分。采集时同时核对终止时间、评分时间和工具调用时间。
 
-原始 reward 与可采信 reward 分开保存。完整 CTRF 测试报告的计数、逐项状态和 reward 需一致；缺报告、边界不明确或测试未正常开始时，不能仅凭 reward 判断能力。当前尚有安装阶段与 CLI 启动错误的分类缺口，见已知问题。
+原始 reward 与可采信 reward 分开保存。完整 CTRF 测试报告的计数、逐项状态和 reward 需一致；缺报告、边界不明确或测试未正常开始时，不能仅凭 reward 判断能力。
+
+环境准备、Agent 安装、Agent 执行和官方评分故障分别分类，能力分数在证据不足时留空。每个 Trial 完成后删除其容器、网络和卷，预构建任务镜像继续作为跨批次缓存；服务重启时按当前数据目录回收遗留运行资源。
 
 ## 监督与人工纠错
 
 监督读取任务、执行证据、工具结果与评分理由，不接收标准答案。监督输出失败类别、证据引用、置信度与修改建议。人工决定是否批准及最终反馈，平台随后创建新 Attempt；原尝试和原始评分保留。
 
+监督显式触发。`task-completion-v2` 把 verdict 定义为任务完成情况：失败任务被正确判零仍是 `fail`，不是 `pass`。与 Trial 未通过状态冲突的原始 `pass` 会保留原回复、标记为 `uncertain` 并进入人工复核。Terminal-Bench 的平台总等待、官方 Agent 解题和 verifier 评分时限也分别传递，避免预算误读。
+
 监督能够看到官方评分，因此监督统计不能解释为独立盲评准确率。比较纠错效果时，应控制任务、模型、工具和预算，并区分自然重试与监督辅助重试。
+
+报告的监督检出率按模型原始 verdict 统计，平台拦截的矛盾结果另行计数。正式实验还应单列三类 verdict、接口失败、无效运行和配对结果。
 
 ## 结果解释
 

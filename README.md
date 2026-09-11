@@ -2,6 +2,8 @@
 
 本地 Agent 评测与人工审核纠错平台。当前主要接入 MMLU 知识题与 Terminal-Bench 终端任务，支持执行 Agent、官方或规则评分、独立监督 Agent、人工批准后的纠错重试。
 
+项目目标、角色边界和分阶段实施路线见 [Eval 设计](docs/DESIGN.md)。当前真实评测主路径使用 Harbor + Docker + Codex `gpt-5.6-sol`，监督带来的总体收益仍需通过受控对照实验验证。
+
 此开发分支只保留 MMLU 的 20 题定义与 Terminal-Bench 的导入、运行代码，以及平台源码、配置示例、测试和说明文档。其他 Benchmark、数据库、模型输出、运行轨迹、真实评测报告、截图、密钥、第三方运行包和虚拟环境不在仓库中。
 
 ## 启动
@@ -30,10 +32,12 @@ Benchmark + AgentSnapshot
     -> 独立 Supervisor 给出结构化建议
     -> 人工接受、修改或拒绝建议
     -> 批准后创建 Attempt 2
-    -> 对比首次成绩与纠错后成绩
+    -> 保存首次与纠错成绩；实验时另设无反馈直接重试对照
 ```
 
 页面保留“评测任务、Benchmark、Agent 配置、纠错审核”四个主入口。首次成绩与监督辅助后的成绩分开记录；监督 Agent 不能自行修改评分规则或批准重试。
+
+监督由用户按需触发，选择监督快照不会自动审查整个批次。跨 Job 的直接重试配对和实验汇总目前由实验侧组织，尚未提供一键对照实验入口。
 
 ## 目录
 
@@ -65,10 +69,12 @@ node tests/test_supervisor_selection.js
 ## 文档与边界
 
 - [架构与评测设计](docs/ARCHITECTURE.md)
+- [Eval 设计与实施路线](docs/DESIGN.md)
 - [使用与配置](docs/USAGE.md)
 - [Terminal-Bench 准备与运行](docs/TERMINAL_BENCH.md)
 - [REST API](docs/API.md)
 - [Benchmark 分层](docs/BENCHMARK_LAYERS.md)
+- [监督纠错对照实验](docs/SUPERVISOR_EXPERIMENT.md)
 - [已知问题与开发范围](docs/KNOWN_ISSUES.md)
 
-当前是本地开发平台，角色头用于本地项目隔离，不是可直接暴露公网的完整认证方案。代码仍有已知的环境准备和分类边界，详见已知问题。本文不提供任何真实批次的成绩或通过率。
+当前是本地开发平台，角色头用于本地项目隔离，不是可直接暴露公网的完整认证方案。长轨迹监督、外部接口稳定性、目标部署环境与实验编排仍需完善，详见已知问题。本文不提供任何真实批次的成绩或通过率。
